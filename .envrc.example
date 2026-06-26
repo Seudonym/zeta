@@ -1,0 +1,4 @@
+use flake
+
+export GEMINI_API_KEY=
+export DEEPSEEK_API_KEY=

@@ -1,5 +1,5 @@
-use color_eyre::eyre::Result;
-use rig::{client::CompletionClient, providers::ollama};
+use color_eyre::eyre::{Context, Result};
+use rig::{client::CompletionClient, providers::gemini};
 use std::io;
 
 mod agent;
@@ -9,8 +9,11 @@ use agent::runtime::AgentRuntime;
 async fn main() -> Result<()> {
     color_eyre::install()?;
 
-    let agent = ollama::Client::new("http://127.0.0.1:11434")?
-        .agent("smollm")
+    let api_key =
+        std::env::var("GEMINI_API_KEY").wrap_err("GEMINI_API_KEY variable is missing in .envrc")?;
+
+    let agent = gemini::Client::new(api_key)?
+        .agent("gemini-3.1-flash-lite")
         .preamble("You are a local assistant. Say whatever.")
         .build();
     let mut runtime = AgentRuntime::new(agent);
