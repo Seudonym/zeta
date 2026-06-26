@@ -1,38 +1,9 @@
+use color_eyre::eyre::Result;
+use rig::{client::CompletionClient, providers::ollama};
 use std::io;
 
-use color_eyre::eyre::Result;
-use rig::{
-    agent::Agent,
-    client::CompletionClient,
-    completion::{Chat, CompletionModel, Message},
-    providers::ollama,
-};
-
-struct AgentRuntime<M>
-where
-    M: CompletionModel,
-{
-    agent: Agent<M>,
-    chat_history: Vec<Message>,
-}
-
-impl<M> AgentRuntime<M>
-where
-    M: CompletionModel + 'static,
-{
-    pub fn new(agent: Agent<M>) -> Self {
-        Self {
-            agent,
-            chat_history: Vec::<Message>::new(),
-        }
-    }
-
-    pub async fn chat(&mut self, input: &str) -> Result<String> {
-        let response = self.agent.chat(input, &mut self.chat_history);
-        let response = response.await?;
-        Ok(response)
-    }
-}
+mod agent;
+use agent::runtime::AgentRuntime;
 
 #[tokio::main]
 async fn main() -> Result<()> {
