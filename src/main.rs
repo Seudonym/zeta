@@ -6,7 +6,7 @@ mod agent;
 mod tools;
 
 use agent::runtime::AgentRuntime;
-use tools::math::Adder;
+use tools::fs::ListFiles;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -17,7 +17,7 @@ async fn main() -> Result<()> {
 
     let agent = gemini::Client::new(api_key)?
         .agent("gemini-3.1-flash-lite")
-        .tool(Adder)
+        .tool(ListFiles)
         .preamble("You are a local assistant. Say whatever.")
         .build();
     let mut runtime = AgentRuntime::new(agent);
