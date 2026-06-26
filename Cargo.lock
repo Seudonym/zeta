@@ -8019,6 +8019,8 @@ dependencies = [
  "color-eyre",
  "futures",
  "rig",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 

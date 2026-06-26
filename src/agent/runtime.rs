@@ -39,12 +39,18 @@ where
                         print!("{}", msg);
                         io::stdout().flush().unwrap();
                     }
+                    StreamedAssistantContent::ToolCall { tool_call, .. } => {
+                        println!("[Tool Call]\n{:?}\n", tool_call);
+                    }
                     StreamedAssistantContent::Final(usage) => {
                         println!();
                         println!("Statistics\n=============\n{:?}", usage.token_usage());
                     }
                     _ => {}
                 },
+                MultiTurnStreamItem::StreamUserItem(content) => {
+                    println!("[Tool Result]\n{:?}", content)
+                }
                 MultiTurnStreamItem::FinalResponse(fin) => {
                     self.chat_history
                         .extend_from_slice(fin.history().unwrap_or_default());
