@@ -1,45 +1,12 @@
 use color_eyre::eyre::{Context, Result};
-use rig::{client::CompletionClient, completion::ToolDefinition, providers::gemini, tool::Tool};
-use serde::{Deserialize, Serialize};
-use serde_json::json;
-use std::{convert::Infallible, io};
+use rig::{client::CompletionClient, providers::gemini};
+use std::io;
 
 mod agent;
+mod tools;
+
 use agent::runtime::AgentRuntime;
-
-#[derive(Deserialize)]
-struct AddArgs {
-    x: i32,
-    y: i32,
-}
-#[derive(Deserialize, Serialize)]
-struct Adder;
-
-impl Tool for Adder {
-    const NAME: &'static str = "add";
-    // TODO: giga ass, pls change after testing
-    type Error = Infallible;
-    type Args = AddArgs;
-    type Output = i32;
-
-    async fn definition(&self, _prompt: String) -> ToolDefinition {
-        ToolDefinition {
-            name: "add".to_string(),
-            description: "Add x and y together".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "x": { "type": "number", "description": "First number" },
-                    "y": { "type": "number", "description": "Second number" }
-                }
-            }),
-        }
-    }
-
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        Ok(args.x + args.y)
-    }
-}
+use tools::math::Adder;
 
 #[tokio::main]
 async fn main() -> Result<()> {
