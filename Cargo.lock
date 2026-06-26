@@ -8017,6 +8017,7 @@ name = "zeta"
 version = "0.1.0"
 dependencies = [
  "color-eyre",
+ "futures",
  "rig",
  "tokio",
 ]

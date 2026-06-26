@@ -24,7 +24,7 @@ async fn main() -> Result<()> {
             continue;
         }
 
-        let response = runtime.chat(input).await?;
+        let response = runtime.chat(input.to_string()).await?;
         println!("{}", response);
     }
 }
