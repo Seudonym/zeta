@@ -28,3 +28,13 @@ pub async fn list_files(directory: String) -> Result<Vec<String>, FsError> {
         .collect();
     Ok(entries)
 }
+
+#[rig::tool_macro(
+    description = "Read the contents of a file",
+    params(filename = "The absolute path of the file")
+)]
+pub async fn read_file(file_path: String) -> Result<String, FsError> {
+    let bytes = fs::read(file_path)?;
+    let res = String::from_utf8_lossy(&bytes).into_owned();
+    Ok(res)
+}
