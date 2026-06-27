@@ -2,13 +2,13 @@ use ratatui::{
     Frame, Terminal,
     backend::Backend,
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
-    layout::{Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Style, Stylize},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Wrap},
 };
 use ratatui_textarea::TextArea;
-use std::{io, time::Duration};
+use std::{fmt::format, io, time::Duration};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::agent::runtime::AgentEvent;
@@ -59,8 +59,14 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
     let mut spans = Vec::new();
     for msg in &app.messages {
         let (style, content) = match msg {
-            MessageLine::User(text) => (Style::default().fg(Color::Rgb(0, 150, 150)), text.clone()),
-            MessageLine::Assistant(text) => (Style::default().fg(Color::White), text.clone()),
+            MessageLine::User(text) => (
+                Style::default().fg(Color::Rgb(0, 150, 150)),
+                format!("{}\n", text.clone()),
+            ),
+            MessageLine::Assistant(text) => (
+                Style::default().fg(Color::White),
+                format!("{}\n", text.clone()),
+            ),
             MessageLine::ToolCall(name, args) => (
                 Style::default().fg(Color::Yellow),
                 format!("{} {}", name, args),
@@ -73,7 +79,11 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
     }
 
     let messages_paragraph = Paragraph::new(spans)
-        .block(Block::default().bg(Color::Rgb(10, 10, 10)))
+        .block(
+            Block::default()
+                .bg(Color::Rgb(10, 10, 10))
+                .padding(Padding::new(5, 5, 1, 1)),
+        )
         .wrap(Wrap { trim: false });
 
     frame.render_widget(messages_paragraph, chunks[0]);
@@ -130,6 +140,10 @@ where
                         } else {
                             app.waiting = true;
                             let input = app.textarea.lines().join("\n").trim().to_string();
+                            if input.is_empty() {
+                                app.waiting = false;
+                                continue;
+                            }
 
                             app.textarea.clear();
                             app.cmd_tx.send(input.clone()).ok();
