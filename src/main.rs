@@ -3,7 +3,10 @@ use ratatui::{
     Terminal,
     backend::CrosstermBackend,
     crossterm::{
-        event::{DisableMouseCapture, EnableMouseCapture},
+        event::{
+            DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags,
+            PushKeyboardEnhancementFlags,
+        },
         execute,
         terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
     },
@@ -31,16 +34,28 @@ async fn main() -> Result<()> {
         .preamble("You are a local assistant. Say whatever.")
         .build();
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
-    let mut runtime = AgentRuntime::new(agent, tx);
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<AgentEvent>();
+    let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<String>();
+    let mut runtime = AgentRuntime::new(agent, event_tx);
+
+    tokio::spawn(async move {
+        while let Some(input) = cmd_rx.recv().await {
+            runtime.chat(input).await.ok();
+        }
+    });
 
     // ui
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    let mut app = ui::app::App::new(rx);
+    let mut app = ui::app::App::new(event_rx, cmd_tx);
     let res = ui::app::run_app(&mut terminal, &mut app);
 
     disable_raw_mode()?;
