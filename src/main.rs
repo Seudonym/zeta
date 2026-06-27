@@ -1,59 +1,23 @@
 use color_eyre::eyre::{Context, Result};
 use ratatui::{
-    Frame, Terminal,
-    backend::{Backend, CrosstermBackend},
+    Terminal,
+    backend::CrosstermBackend,
     crossterm::{
-        event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+        event::{DisableMouseCapture, EnableMouseCapture},
         execute,
         terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
     },
-    layout::{Constraint, Direction, Layout},
-    style::{Color, Style},
-    text::Text,
-    widgets::{Block, Borders, Paragraph},
 };
 use rig::{client::CompletionClient, providers::gemini, tool::ToolDyn};
 use std::io;
-use tokio::sync::mpsc::{self, UnboundedReceiver};
+use tokio::sync::mpsc;
 
 mod agent;
 mod tools;
+mod ui;
 
 use agent::runtime::{AgentEvent, AgentRuntime};
 use tools::fs::{ListFiles, ReadFile};
-
-enum MessageLine {
-    User(String),
-    Assistant(String),
-    ToolCall(String, String),
-}
-
-struct App {
-    input: String,
-    messages: Vec<MessageLine>,
-    waiting: bool,
-    exit: bool,
-    rx: Option<UnboundedReceiver<AgentEvent>>,
-}
-
-impl App {
-    fn new() -> Self {
-        Self {
-            input: String::from(""),
-            messages: Vec::<MessageLine>::new(),
-            waiting: false,
-            exit: false,
-            rx: None,
-        }
-    }
-
-    fn with_receiver(self, rx: UnboundedReceiver<AgentEvent>) -> Self {
-        Self {
-            rx: Some(rx),
-            ..self
-        }
-    }
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -76,8 +40,8 @@ async fn main() -> Result<()> {
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    let mut app = App::new().with_receiver(rx);
-    let res = run_app(&mut terminal, &mut app);
+    let mut app = ui::app::App::new().with_receiver(rx);
+    let res = ui::app::run_app(&mut terminal, &mut app);
 
     disable_raw_mode()?;
     execute!(
@@ -88,61 +52,4 @@ async fn main() -> Result<()> {
     terminal.show_cursor()?;
 
     Ok(())
-}
-
-fn ui(frame: &mut Frame, app: &App) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(3)])
-        .split(frame.area());
-
-    let input_block = Block::default()
-        .borders(Borders::TOP)
-        .style(Style::default().bg(Color::Black));
-
-    let input_text_widget = if app.input.is_empty() {
-        Paragraph::new(Text::styled(
-            "Prompt goes here",
-            Style::default().fg(Color::DarkGray).italic(),
-        ))
-        .block(input_block)
-    } else {
-        Paragraph::new(Text::styled(&app.input, Style::default().fg(Color::White)))
-            .block(input_block)
-    };
-
-    frame.render_widget(input_text_widget, chunks[1]);
-}
-
-fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<bool>
-where
-    io::Error: From<B::Error>,
-{
-    loop {
-        if app.exit {
-            return Ok(true);
-        }
-        terminal.draw(|f| ui(f, app))?;
-        if let Event::Key(key) = event::read()? {
-            if key.kind == event::KeyEventKind::Release {
-                continue;
-            }
-
-            match key.code {
-                KeyCode::Esc => {
-                    app.exit = true;
-                }
-                KeyCode::Enter => {
-                    app.input.push('\n');
-                }
-                KeyCode::Backspace => {
-                    app.input.pop();
-                }
-                KeyCode::Char(value) => {
-                    app.input.push(value);
-                }
-                _ => {}
-            }
-        }
-    }
 }
