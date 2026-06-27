@@ -3,10 +3,10 @@ use ratatui::{
     backend::Backend,
     crossterm::event::{self, Event, KeyCode},
     layout::{Constraint, Direction, Layout},
-    style::{Color, Style},
-    text::Text,
-    widgets::{Block, Borders, Paragraph},
+    style::{Color, Style, Stylize},
+    widgets::{Block, Borders, Padding},
 };
+use ratatui_textarea::TextArea;
 use std::io;
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -18,55 +18,44 @@ enum MessageLine {
     ToolCall(String, String),
 }
 
-pub struct App {
-    input: String,
+pub struct App<'a> {
+    textarea: TextArea<'a>,
     messages: Vec<MessageLine>,
     waiting: bool,
     exit: bool,
-    rx: Option<UnboundedReceiver<AgentEvent>>,
+    rx: UnboundedReceiver<AgentEvent>,
 }
 
-impl App {
-    pub fn new() -> Self {
+impl<'a> App<'a> {
+    pub fn new(rx: UnboundedReceiver<AgentEvent>) -> Self {
+        let mut textarea = TextArea::default();
+        textarea.set_cursor_line_style(Style::default());
+        textarea.set_placeholder_text("Input goes here");
+        textarea.set_placeholder_style(Style::default().fg(Color::DarkGray).italic());
+
         Self {
-            input: String::from(""),
+            textarea,
             messages: Vec::<MessageLine>::new(),
             waiting: false,
             exit: false,
-            rx: None,
-        }
-    }
-
-    pub fn with_receiver(self, rx: UnboundedReceiver<AgentEvent>) -> Self {
-        Self {
-            rx: Some(rx),
-            ..self
+            rx,
         }
     }
 }
 
-pub fn ui(frame: &mut Frame, app: &App) {
+pub fn ui(frame: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(3)])
+        .constraints([Constraint::Min(3), Constraint::Max(6)])
         .split(frame.area());
 
-    let input_block = Block::default()
-        .borders(Borders::TOP)
-        .style(Style::default().bg(Color::Black));
+    app.textarea
+        .set_block(Block::new().padding(Padding::new(1, 1, 1, 0)));
 
-    let input_text_widget = if app.input.is_empty() {
-        Paragraph::new(Text::styled(
-            "Prompt goes here",
-            Style::default().fg(Color::DarkGray).italic(),
-        ))
-        .block(input_block)
-    } else {
-        Paragraph::new(Text::styled(&app.input, Style::default().fg(Color::White)))
-            .block(input_block)
-    };
+    frame.render_widget(&app.textarea, chunks[1]);
 
-    frame.render_widget(input_text_widget, chunks[1]);
+    let test = Block::new().bg(Color::Rgb(10, 10, 10));
+    frame.render_widget(test, chunks[0]);
 }
 
 pub fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<bool>
@@ -88,15 +77,11 @@ where
                     app.exit = true;
                 }
                 KeyCode::Enter => {
-                    app.input.push('\n');
+                    app.waiting = true;
                 }
-                KeyCode::Backspace => {
-                    app.input.pop();
+                _ => {
+                    app.textarea.input(key);
                 }
-                KeyCode::Char(value) => {
-                    app.input.push(value);
-                }
-                _ => {}
             }
         }
     }

@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    let mut app = ui::app::App::new().with_receiver(rx);
+    let mut app = ui::app::App::new(rx);
     let res = ui::app::run_app(&mut terminal, &mut app);
 
     disable_raw_mode()?;
