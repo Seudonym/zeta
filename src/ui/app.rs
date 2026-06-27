@@ -4,7 +4,8 @@ use ratatui::{
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
     layout::{Constraint, Direction, Layout},
     style::{Color, Style, Stylize},
-    widgets::{Block, Borders, List, ListItem, Padding, Paragraph},
+    text::{Line, Span},
+    widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Wrap},
 };
 use ratatui_textarea::TextArea;
 use std::{io, time::Duration};
@@ -55,32 +56,27 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
     app.textarea
         .set_block(Block::new().padding(Padding::new(1, 1, 1, 0)));
 
-    // Messages list in the top area
-    let messages: Vec<ListItem> = app
-        .messages
-        .iter()
-        .map(|msg| {
-            let (style, prefix, content) = match msg {
-                MessageLine::User(text) => {
-                    (Style::default().fg(Color::Cyan), "You: ", text.clone())
-                }
-                MessageLine::Assistant(text) => {
-                    (Style::default().fg(Color::White), "", text.clone())
-                }
-                MessageLine::ToolCall(name, args) => (
-                    Style::default().fg(Color::Yellow),
-                    "Tool: ",
-                    format!("{}({})", name, args),
-                ),
-            };
-            ListItem::new(format!("{}{}", prefix, content)).style(style)
-        })
-        .collect();
+    let mut spans = Vec::new();
+    for msg in &app.messages {
+        let (style, content) = match msg {
+            MessageLine::User(text) => (Style::default().fg(Color::Rgb(0, 150, 150)), text.clone()),
+            MessageLine::Assistant(text) => (Style::default().fg(Color::White), text.clone()),
+            MessageLine::ToolCall(name, args) => (
+                Style::default().fg(Color::Yellow),
+                format!("{} {}", name, args),
+            ),
+        };
 
-    let messages_list =
-        List::new(messages).block(Block::default().borders(Borders::ALL).title("Chat"));
+        for line in content.lines() {
+            spans.push(Line::from(Span::styled(line.to_string(), style)));
+        }
+    }
 
-    frame.render_widget(messages_list, chunks[0]);
+    let messages_paragraph = Paragraph::new(spans)
+        .block(Block::default().bg(Color::Rgb(10, 10, 10)))
+        .wrap(Wrap { trim: false });
+
+    frame.render_widget(messages_paragraph, chunks[0]);
     frame.render_widget(&app.textarea, chunks[1]);
 }
 
@@ -133,12 +129,17 @@ where
                             app.textarea.input(key);
                         } else {
                             app.waiting = true;
-                            let input = app.textarea.lines().join("\n");
-                            app.cmd_tx.send(input).ok();
+                            let input = app.textarea.lines().join("\n").trim().to_string();
+
+                            app.textarea.clear();
+                            app.cmd_tx.send(input.clone()).ok();
+                            app.messages.push(MessageLine::User(input));
                         }
                     }
                     _ => {
-                        app.textarea.input(key);
+                        if !app.waiting {
+                            app.textarea.input(key);
+                        }
                     }
                 }
             }
