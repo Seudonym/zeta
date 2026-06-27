@@ -1,13 +1,19 @@
-use std::io::{self, Write};
-
 use color_eyre::eyre::Result;
 use futures::StreamExt;
 use rig::{
     agent::{Agent, MultiTurnStreamItem},
-    completion::{CompletionModel, GetTokenUsage},
-    message::Message,
-    streaming::{StreamedAssistantContent, StreamingChat},
+    completion::CompletionModel,
+    message::{Message, ToolCall},
+    streaming::{StreamedAssistantContent, StreamedUserContent, StreamingChat},
 };
+use tokio::sync::mpsc::UnboundedSender;
+
+pub enum AgentEvent {
+    Token(String),
+    ToolCall(ToolCall),
+    ToolCallDone,
+    Done,
+}
 
 pub struct AgentRuntime<M>
 where
@@ -15,52 +21,49 @@ where
 {
     agent: Agent<M>,
     chat_history: Vec<Message>,
+    sender: UnboundedSender<AgentEvent>,
 }
 
 impl<M> AgentRuntime<M>
 where
     M: CompletionModel + 'static,
 {
-    pub fn new(agent: Agent<M>) -> Self {
+    pub fn new(agent: Agent<M>, sender: UnboundedSender<AgentEvent>) -> Self {
         Self {
             agent,
             chat_history: Vec::<Message>::new(),
+            sender,
         }
     }
 
-    pub async fn chat(&mut self, input: String) -> Result<String> {
+    pub async fn chat(&mut self, input: String) -> Result<()> {
         let history = self.chat_history.clone();
         let mut stream = self.agent.stream_chat(input, history).await;
         while let Some(chunk) = stream.next().await {
             match chunk? {
-                // TODO: please fucking remove the prints after testign
                 MultiTurnStreamItem::StreamAssistantItem(item) => match item {
                     StreamedAssistantContent::Text(msg) => {
-                        print!("{}", msg);
-                        io::stdout().flush().unwrap();
+                        self.sender.send(AgentEvent::Token(msg.text))?
                     }
                     StreamedAssistantContent::ToolCall { tool_call, .. } => {
-                        println!("[Tool Call]\n{:?}\n", tool_call);
+                        self.sender.send(AgentEvent::ToolCall(tool_call))?
                     }
-                    StreamedAssistantContent::Final(usage) => {
-                        println!();
-                        println!("Statistics\n=============\n{:?}", usage.token_usage());
-                    }
+                    StreamedAssistantContent::Final(_) => self.sender.send(AgentEvent::Done)?,
                     _ => {}
                 },
-                MultiTurnStreamItem::StreamUserItem(content) => {
-                    println!("[Tool Result]\n{:?}", content)
-                }
+                MultiTurnStreamItem::StreamUserItem(content) => match content {
+                    StreamedUserContent::ToolResult { .. } => {
+                        self.sender.send(AgentEvent::ToolCallDone)?
+                    }
+                },
                 MultiTurnStreamItem::FinalResponse(fin) => {
                     self.chat_history
                         .extend_from_slice(fin.history().unwrap_or_default());
-
-                    println!("{:?}", self.chat_history);
                 }
                 _ => {}
             }
         }
 
-        Ok(String::new())
+        Ok(())
     }
 }
