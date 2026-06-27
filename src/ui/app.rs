@@ -1,15 +1,16 @@
 use ratatui::{
     Frame, Terminal,
     backend::Backend,
-    crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
-    layout::{Alignment, Constraint, Direction, Layout},
+    crossterm::event::{self, Event, KeyCode, KeyModifiers},
+    layout::{Constraint, Direction, Layout},
     style::{Color, Style, Stylize},
-    text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Wrap},
+    text::{Line, Span, Text},
+    widgets::{Block, Borders, Padding, Paragraph, Wrap},
 };
 use ratatui_textarea::TextArea;
-use std::{fmt::format, io, time::Duration};
+use std::{io, time::Duration};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tui_markdown::{Options, StyleSheet};
 
 use crate::agent::runtime::AgentEvent;
 
@@ -17,6 +18,33 @@ enum MessageLine {
     User(String),
     Assistant(String),
     ToolCall(String, String),
+}
+#[derive(Clone)]
+pub struct ZetaStyleSheet;
+impl StyleSheet for ZetaStyleSheet {
+    fn heading(&self, level: u8) -> Style {
+        Style::new().bold()
+    }
+
+    fn code(&self) -> Style {
+        Style::new().white().on_dark_gray()
+    }
+
+    fn link(&self) -> Style {
+        Style::new().blue().underlined()
+    }
+
+    fn blockquote(&self) -> Style {
+        Style::new().yellow()
+    }
+
+    fn heading_meta(&self) -> Style {
+        Style::new().dim()
+    }
+
+    fn metadata_block(&self) -> Style {
+        Style::new().light_yellow()
+    }
 }
 
 pub struct App<'a> {
@@ -26,6 +54,7 @@ pub struct App<'a> {
     exit: bool,
     event_rx: UnboundedReceiver<AgentEvent>,
     cmd_tx: UnboundedSender<String>,
+    md_options: Options<ZetaStyleSheet>,
 }
 
 impl<'a> App<'a> {
@@ -36,6 +65,8 @@ impl<'a> App<'a> {
         textarea.set_placeholder_style(Style::default().fg(Color::DarkGray).italic());
         textarea.set_wrap_mode(ratatui_textarea::WrapMode::Word);
 
+        let md_options = Options::new(ZetaStyleSheet);
+
         Self {
             textarea,
             messages: Vec::<MessageLine>::new(),
@@ -43,50 +74,59 @@ impl<'a> App<'a> {
             exit: false,
             event_rx,
             cmd_tx,
+            md_options,
         }
     }
 }
 
 pub fn ui(frame: &mut Frame, app: &mut App) {
+    let input_line_count = app.textarea.lines().len() as u16;
+    let input_height = (input_line_count + 2).max(3).min(20);
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Max(6)])
+        .constraints([Constraint::Min(0), Constraint::Length(input_height)])
         .split(frame.area());
 
-    app.textarea
-        .set_block(Block::new().padding(Padding::new(1, 1, 1, 0)));
+    app.textarea.set_block(
+        Block::new()
+            .padding(Padding::new(1, 1, 1, 1))
+            .bg(Color::Rgb(40, 40, 40)),
+    );
 
-    let mut spans = Vec::new();
-    for msg in &app.messages {
-        let (style, content) = match msg {
-            MessageLine::User(text) => (
-                Style::default().fg(Color::Rgb(0, 150, 150)),
-                format!("{}\n", text.clone()),
-            ),
-            MessageLine::Assistant(text) => (
-                Style::default().fg(Color::White),
-                format!("{}\n", text.clone()),
-            ),
-            MessageLine::ToolCall(name, args) => (
-                Style::default().fg(Color::Yellow),
-                format!("{} {}", name, args),
-            ),
-        };
-
-        for line in content.lines() {
-            spans.push(Line::from(Span::styled(line.to_string(), style)));
+    let mut lines: Vec<Line> = Vec::new();
+    for msg in app.messages.iter() {
+        match msg {
+            MessageLine::User(text) => {
+                lines.push(
+                    Line::from(vec![Span::raw(text.clone())])
+                        .style(Style::default().fg(Color::Cyan)),
+                );
+            }
+            MessageLine::Assistant(text) => {
+                if !text.is_empty() {
+                    let md = tui_markdown::from_str_with_options(text, &app.md_options);
+                    lines.extend(md.lines);
+                }
+            }
+            MessageLine::ToolCall(name, args) => {
+                lines.push(
+                    Line::from(format!("{name} {args}")).style(Style::default().fg(Color::Yellow)),
+                );
+            }
         }
+        lines.push(Line::from(""));
     }
 
-    let messages_paragraph = Paragraph::new(spans)
+    let messages_para = Paragraph::new(Text::from(lines))
         .block(
             Block::default()
-                .bg(Color::Rgb(10, 10, 10))
-                .padding(Padding::new(5, 5, 1, 1)),
+                .padding(Padding::new(5, 5, 1, 1))
+                .bg(Color::Rgb(10, 10, 10)),
         )
         .wrap(Wrap { trim: false });
 
-    frame.render_widget(messages_paragraph, chunks[0]);
+    frame.render_widget(messages_para, chunks[0]);
     frame.render_widget(&app.textarea, chunks[1]);
 }
 
@@ -95,11 +135,6 @@ where
     io::Error: From<B::Error>,
 {
     loop {
-        terminal.draw(|f| ui(f, app))?;
-        if app.exit {
-            return Ok(true);
-        }
-
         while let Ok(event) = app.event_rx.try_recv() {
             match event {
                 AgentEvent::Token(token) => {
@@ -157,6 +192,11 @@ where
                     }
                 }
             }
+        }
+
+        terminal.draw(|f| ui(f, app))?;
+        if app.exit {
+            return Ok(true);
         }
     }
 }

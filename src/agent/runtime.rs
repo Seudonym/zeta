@@ -6,7 +6,7 @@ use rig::{
     message::{Message, ToolCall},
     streaming::{StreamedAssistantContent, StreamedUserContent, StreamingChat},
 };
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::UnboundedSender;
 
 pub enum AgentEvent {
     Token(String),

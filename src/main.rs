@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
         .preamble("You are a local assistant. Say whatever.")
         .build();
 
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<AgentEvent>();
+    let (event_tx, event_rx) = mpsc::unbounded_channel::<AgentEvent>();
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<String>();
     let mut runtime = AgentRuntime::new(agent, event_tx);
 
@@ -56,7 +56,7 @@ async fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     let mut app = ui::app::App::new(event_rx, cmd_tx);
-    let res = ui::app::run_app(&mut terminal, &mut app);
+    let _res = ui::app::run_app(&mut terminal, &mut app);
 
     disable_raw_mode()?;
     execute!(
