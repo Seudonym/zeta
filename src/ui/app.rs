@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Padding, Paragraph, Wrap},
+    widgets::{Block, Padding, Paragraph, Wrap},
 };
 use ratatui_textarea::TextArea;
 use std::{io, time::Duration};
@@ -22,7 +22,7 @@ enum MessageLine {
 #[derive(Clone)]
 pub struct ZetaStyleSheet;
 impl StyleSheet for ZetaStyleSheet {
-    fn heading(&self, level: u8) -> Style {
+    fn heading(&self, _level: u8) -> Style {
         Style::new().bold()
     }
 
@@ -81,7 +81,7 @@ impl<'a> App<'a> {
 
 pub fn ui(frame: &mut Frame, app: &mut App) {
     let input_line_count = app.textarea.lines().len() as u16;
-    let input_height = (input_line_count + 2).max(3).min(20);
+    let input_height = (input_line_count + 2).clamp(3, 20);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -159,36 +159,36 @@ where
             }
         }
 
-        if event::poll(Duration::from_millis(150))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == event::KeyEventKind::Release {
-                    continue;
+        if event::poll(Duration::from_millis(150))?
+            && let Event::Key(key) = event::read()?
+        {
+            if key.kind == event::KeyEventKind::Release {
+                continue;
+            }
+
+            match key.code {
+                KeyCode::Esc => {
+                    app.exit = true;
                 }
-
-                match key.code {
-                    KeyCode::Esc => {
-                        app.exit = true;
-                    }
-                    KeyCode::Enter => {
-                        if key.modifiers.contains(KeyModifiers::SHIFT) {
-                            app.textarea.input(key);
-                        } else {
-                            app.waiting = true;
-                            let input = app.textarea.lines().join("\n").trim().to_string();
-                            if input.is_empty() {
-                                app.waiting = false;
-                                continue;
-                            }
-
-                            app.textarea.clear();
-                            app.cmd_tx.send(input.clone()).ok();
-                            app.messages.push(MessageLine::User(input));
+                KeyCode::Enter => {
+                    if key.modifiers.contains(KeyModifiers::SHIFT) {
+                        app.textarea.input(key);
+                    } else {
+                        app.waiting = true;
+                        let input = app.textarea.lines().join("\n").trim().to_string();
+                        if input.is_empty() {
+                            app.waiting = false;
+                            continue;
                         }
+
+                        app.textarea.clear();
+                        app.cmd_tx.send(input.clone()).ok();
+                        app.messages.push(MessageLine::User(input));
                     }
-                    _ => {
-                        if !app.waiting {
-                            app.textarea.input(key);
-                        }
+                }
+                _ => {
+                    if !app.waiting {
+                        app.textarea.input(key);
                     }
                 }
             }
