@@ -22,8 +22,17 @@ enum MessageLine {
 #[derive(Clone)]
 pub struct ZetaStyleSheet;
 impl StyleSheet for ZetaStyleSheet {
-    fn heading(&self, _level: u8) -> Style {
-        Style::new().bold()
+    fn heading(&self, level: u8) -> Style {
+        let base_style = Style::new().bold();
+        match level {
+            1 => base_style.red(),
+            2 => base_style.green(),
+            3 => base_style.blue(),
+            4 => base_style.cyan(),
+            5 => base_style.magenta(),
+            6 => base_style.yellow(),
+            _ => base_style.white(),
+        }
     }
 
     fn code(&self) -> Style {
@@ -50,7 +59,11 @@ impl StyleSheet for ZetaStyleSheet {
 pub struct App<'a> {
     textarea: TextArea<'a>,
     messages: Vec<MessageLine>,
+
     scroll_offset: u16,
+    max_scroll_offset: u16,
+    auto_scroll: bool,
+
     waiting: bool,
     exit: bool,
     event_rx: UnboundedReceiver<AgentEvent>,
@@ -72,7 +85,9 @@ impl<'a> App<'a> {
             textarea,
             messages: Vec::<MessageLine>::new(),
             scroll_offset: 0,
+            max_scroll_offset: 0,
             waiting: false,
+            auto_scroll: false,
             exit: false,
             event_rx,
             cmd_tx,
@@ -107,7 +122,7 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
             MessageLine::User(text) => {
                 lines.push(
                     Line::from(vec![Span::raw(text.clone())])
-                        .style(Style::default().fg(Color::Cyan)),
+                        .style(Style::default().fg(Color::Cyan).italic()),
                 );
             }
             MessageLine::Assistant(text) => {
@@ -116,18 +131,37 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
             }
             MessageLine::ToolCall(name, args) => {
                 lines.push(
-                    Line::from(format!("-> {name}({args})"))
-                        .style(Style::default().fg(Color::Yellow)),
+                    Line::from(format!("-> {}({})", name, args))
+                        .style(Style::default().fg(Color::Green)),
                 );
             }
         }
         lines.push(Line::from(""));
     }
 
+    let logical_line_count = lines
+        .iter()
+        .map(|line| {
+            let w = line.width();
+            if w == 0 {
+                1
+            } else {
+                w.div_ceil(chunks[0].width as usize)
+            }
+        })
+        .sum::<usize>();
+    app.max_scroll_offset = (logical_line_count as u16 + 2).saturating_sub(chunks[0].height);
+    if app.auto_scroll {
+        app.scroll_offset = app.max_scroll_offset;
+    }
+
     let messages_para = Paragraph::new(Text::from(lines))
         .scroll((app.scroll_offset, 0))
-        .block(Block::default().padding(Padding::new(5, 5, 1, 1)))
+        .block(Block::default().padding(Padding::new(0, 0, 1, 1)))
         .wrap(Wrap { trim: false });
+
+    // TODO: delete this
+    eprintln!("{}, {}", app.scroll_offset, app.max_scroll_offset);
 
     frame.render_widget(messages_para, chunks[0]);
     frame.render_widget(indicator, input_layout[0]);
@@ -154,13 +188,16 @@ where
                         tool_call.function.arguments.to_string(),
                     ));
                 }
-                AgentEvent::ToolCallDone => {
-                    // Tool call finished -- you could add a visual separator here
-                }
+                AgentEvent::ToolCallDone => {}
                 AgentEvent::Done => {
                     app.waiting = false;
                 }
             }
+        }
+
+        terminal.draw(|f| ui(f, app))?;
+        if app.exit {
+            return Ok(true);
         }
 
         if event::poll(Duration::from_millis(150))? {
@@ -168,10 +205,12 @@ where
             if let Event::Mouse(MouseEvent { kind, .. }) = event {
                 match kind {
                     MouseEventKind::ScrollDown => {
-                        app.scroll_offset += 2;
+                        app.auto_scroll = false;
+                        app.scroll_offset = (app.scroll_offset + 1).clamp(0, app.max_scroll_offset);
                     }
                     MouseEventKind::ScrollUp => {
-                        app.scroll_offset = app.scroll_offset.saturating_sub(2);
+                        app.auto_scroll = false;
+                        app.scroll_offset = app.scroll_offset.saturating_sub(1);
                     }
                     _ => {}
                 }
@@ -190,6 +229,7 @@ where
                             app.textarea.input(key);
                         } else {
                             app.waiting = true;
+                            app.auto_scroll = true;
                             let input = app.textarea.lines().join("\n").trim().to_string();
                             if input.is_empty() {
                                 app.waiting = false;
@@ -208,11 +248,6 @@ where
                     }
                 }
             }
-        }
-
-        terminal.draw(|f| ui(f, app))?;
-        if app.exit {
-            return Ok(true);
         }
     }
 }
