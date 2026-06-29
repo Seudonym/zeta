@@ -1,11 +1,11 @@
 use ratatui::{
     Frame, Terminal,
     backend::Backend,
-    crossterm::event::{self, Event, KeyCode, KeyModifiers},
+    crossterm::event::{self, Event, KeyCode, KeyModifiers, MouseEvent, MouseEventKind},
     layout::{Constraint, Direction, Layout},
-    style::{Color, Style, Stylize},
+    style::{Color, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Padding, Paragraph, Wrap},
+    widgets::{Block, Borders, Padding, Paragraph, Wrap},
 };
 use ratatui_textarea::TextArea;
 use std::{io, time::Duration};
@@ -50,6 +50,7 @@ impl StyleSheet for ZetaStyleSheet {
 pub struct App<'a> {
     textarea: TextArea<'a>,
     messages: Vec<MessageLine>,
+    scroll_offset: u16,
     waiting: bool,
     exit: bool,
     event_rx: UnboundedReceiver<AgentEvent>,
@@ -62,7 +63,7 @@ impl<'a> App<'a> {
         let mut textarea = TextArea::default();
         textarea.set_cursor_line_style(Style::default());
         textarea.set_placeholder_text("Input goes here");
-        textarea.set_placeholder_style(Style::default().fg(Color::DarkGray).italic());
+        textarea.set_placeholder_style(Style::default().italic());
         textarea.set_wrap_mode(ratatui_textarea::WrapMode::Word);
 
         let md_options = Options::new(ZetaStyleSheet);
@@ -70,6 +71,7 @@ impl<'a> App<'a> {
         Self {
             textarea,
             messages: Vec::<MessageLine>::new(),
+            scroll_offset: 0,
             waiting: false,
             exit: false,
             event_rx,
@@ -88,11 +90,16 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
         .constraints([Constraint::Min(0), Constraint::Length(input_height)])
         .split(frame.area());
 
-    app.textarea.set_block(
-        Block::new()
-            .padding(Padding::new(1, 1, 1, 1))
-            .bg(Color::Rgb(40, 40, 40)),
-    );
+    let input_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .split(chunks[1]);
+
+    app.textarea
+        .set_block(Block::new().borders(Borders::TOP | Borders::BOTTOM));
+
+    let indicator = Paragraph::new(Text::from(">"))
+        .block(Block::default().borders(Borders::TOP | Borders::BOTTOM));
 
     let mut lines: Vec<Line> = Vec::new();
     for msg in app.messages.iter() {
@@ -104,14 +111,13 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
                 );
             }
             MessageLine::Assistant(text) => {
-                if !text.is_empty() {
-                    let md = tui_markdown::from_str_with_options(text, &app.md_options);
-                    lines.extend(md.lines);
-                }
+                let md = tui_markdown::from_str_with_options(text, &app.md_options);
+                lines.extend(md.lines);
             }
             MessageLine::ToolCall(name, args) => {
                 lines.push(
-                    Line::from(format!("{name} {args}")).style(Style::default().fg(Color::Yellow)),
+                    Line::from(format!("-> {name}({args})"))
+                        .style(Style::default().fg(Color::Yellow)),
                 );
             }
         }
@@ -119,15 +125,13 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
     }
 
     let messages_para = Paragraph::new(Text::from(lines))
-        .block(
-            Block::default()
-                .padding(Padding::new(5, 5, 1, 1))
-                .bg(Color::Rgb(10, 10, 10)),
-        )
+        .scroll((app.scroll_offset, 0))
+        .block(Block::default().padding(Padding::new(5, 5, 1, 1)))
         .wrap(Wrap { trim: false });
 
     frame.render_widget(messages_para, chunks[0]);
-    frame.render_widget(&app.textarea, chunks[1]);
+    frame.render_widget(indicator, input_layout[0]);
+    frame.render_widget(&app.textarea, input_layout[1]);
 }
 
 pub fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<bool>
@@ -159,36 +163,48 @@ where
             }
         }
 
-        if event::poll(Duration::from_millis(150))?
-            && let Event::Key(key) = event::read()?
-        {
-            if key.kind == event::KeyEventKind::Release {
-                continue;
-            }
-
-            match key.code {
-                KeyCode::Esc => {
-                    app.exit = true;
-                }
-                KeyCode::Enter => {
-                    if key.modifiers.contains(KeyModifiers::SHIFT) {
-                        app.textarea.input(key);
-                    } else {
-                        app.waiting = true;
-                        let input = app.textarea.lines().join("\n").trim().to_string();
-                        if input.is_empty() {
-                            app.waiting = false;
-                            continue;
-                        }
-
-                        app.textarea.clear();
-                        app.cmd_tx.send(input.clone()).ok();
-                        app.messages.push(MessageLine::User(input));
+        if event::poll(Duration::from_millis(150))? {
+            let event = event::read()?;
+            if let Event::Mouse(MouseEvent { kind, .. }) = event {
+                match kind {
+                    MouseEventKind::ScrollDown => {
+                        app.scroll_offset += 2;
                     }
+                    MouseEventKind::ScrollUp => {
+                        app.scroll_offset = app.scroll_offset.saturating_sub(2);
+                    }
+                    _ => {}
                 }
-                _ => {
-                    if !app.waiting {
-                        app.textarea.input(key);
+            }
+            if let Event::Key(key) = event {
+                if key.kind == event::KeyEventKind::Release {
+                    continue;
+                }
+
+                match key.code {
+                    KeyCode::Esc => {
+                        app.exit = true;
+                    }
+                    KeyCode::Enter => {
+                        if key.modifiers.contains(KeyModifiers::SHIFT) {
+                            app.textarea.input(key);
+                        } else {
+                            app.waiting = true;
+                            let input = app.textarea.lines().join("\n").trim().to_string();
+                            if input.is_empty() {
+                                app.waiting = false;
+                                continue;
+                            }
+
+                            app.textarea.clear();
+                            app.cmd_tx.send(input.clone()).ok();
+                            app.messages.push(MessageLine::User(input));
+                        }
+                    }
+                    _ => {
+                        if !app.waiting {
+                            app.textarea.input(key);
+                        }
                     }
                 }
             }
