@@ -18,6 +18,7 @@ enum MessageLine {
     User(String),
     Assistant(String),
     ToolCall(String, String),
+    Error(String),
 }
 #[derive(Clone)]
 pub struct ZetaStyleSheet;
@@ -135,6 +136,10 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
                         .style(Style::default().fg(Color::Green)),
                 );
             }
+
+            MessageLine::Error(error) => {
+                lines.push(Line::from(error.to_string()).style(Style::default().fg(Color::Red)));
+            }
         }
         lines.push(Line::from(""));
     }
@@ -190,6 +195,11 @@ where
                 }
                 AgentEvent::ToolCallDone => {}
                 AgentEvent::Done => {
+                    app.waiting = false;
+                }
+
+                AgentEvent::Error(error) => {
+                    app.messages.push(MessageLine::Error(error));
                     app.waiting = false;
                 }
             }

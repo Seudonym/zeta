@@ -13,6 +13,8 @@ pub enum AgentEvent {
     ToolCall(ToolCall),
     ToolCallDone,
     Done,
+
+    Error(String),
 }
 
 pub struct AgentRuntime<M>
@@ -39,8 +41,15 @@ where
     pub async fn chat(&mut self, input: String) -> Result<()> {
         let history = self.chat_history.clone();
         let mut stream = self.agent.stream_chat(input, history).await;
-        while let Some(chunk) = stream.next().await {
-            match chunk? {
+        while let Some(chunk_result) = stream.next().await {
+            let chunk = match chunk_result {
+                Ok(c) => c,
+                Err(e) => {
+                    self.sender.send(AgentEvent::Error(e.to_string()))?;
+                    return Err(e.into());
+                }
+            };
+            match chunk {
                 MultiTurnStreamItem::StreamAssistantItem(item) => match item {
                     StreamedAssistantContent::Text(msg) => {
                         self.sender.send(AgentEvent::Token(msg.text))?
