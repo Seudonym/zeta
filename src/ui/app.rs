@@ -14,6 +14,8 @@ use tui_markdown::{Options, StyleSheet};
 
 use crate::agent::runtime::AgentEvent;
 
+const SPINNER_FRAMES: [&str; 4] = ["/", "-", "\\", "|"];
+
 enum MessageLine {
     User(String),
     Assistant(String),
@@ -67,6 +69,7 @@ pub struct App<'a> {
 
     waiting: bool,
     exit: bool,
+    frame_count: usize,
     event_rx: UnboundedReceiver<AgentEvent>,
     cmd_tx: UnboundedSender<String>,
     md_options: Options<ZetaStyleSheet>,
@@ -85,10 +88,13 @@ impl<'a> App<'a> {
         Self {
             textarea,
             messages: Vec::<MessageLine>::new(),
+
             scroll_offset: 0,
             max_scroll_offset: 0,
-            waiting: false,
             auto_scroll: false,
+
+            frame_count: 0,
+            waiting: false,
             exit: false,
             event_rx,
             cmd_tx,
@@ -114,7 +120,14 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
     app.textarea
         .set_block(Block::new().borders(Borders::TOP | Borders::BOTTOM));
 
-    let indicator = Paragraph::new(Text::from(">"))
+    let indicator_text = if app.waiting {
+        let frame_idx = app.frame_count % SPINNER_FRAMES.len();
+        SPINNER_FRAMES[frame_idx]
+    } else {
+        ">"
+    };
+
+    let indicator = Paragraph::new(Text::from(indicator_text))
         .block(Block::default().borders(Borders::TOP | Borders::BOTTOM));
 
     let mut lines: Vec<Line> = Vec::new();
@@ -165,9 +178,6 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
         .block(Block::default().padding(Padding::new(0, 0, 1, 1)))
         .wrap(Wrap { trim: false });
 
-    // TODO: delete this
-    eprintln!("{}, {}", app.scroll_offset, app.max_scroll_offset);
-
     frame.render_widget(messages_para, chunks[0]);
     frame.render_widget(indicator, input_layout[0]);
     frame.render_widget(&app.textarea, input_layout[1]);
@@ -205,6 +215,7 @@ where
             }
         }
 
+        app.frame_count = app.frame_count.wrapping_add(1);
         terminal.draw(|f| ui(f, app))?;
         if app.exit {
             return Ok(true);
