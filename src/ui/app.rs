@@ -16,12 +16,31 @@ use crate::agent::runtime::AgentEvent;
 
 const SPINNER_FRAMES: [&str; 4] = ["/", "-", "\\", "|"];
 
-enum MessageLine {
-    User(String, Vec<Line<'static>>),
-    Assistant(String, Vec<Line<'static>>),
-    ToolCall(String, String, Vec<Line<'static>>),
-    Error(String, Vec<Line<'static>>),
+enum Role {
+    User,
+    Assistant,
 }
+
+struct ChatMessage {
+    role: Role,
+    text: String,
+    rendered: Vec<Line<'static>>,
+    dirty: bool,
+}
+
+enum Message {
+    Chat(ChatMessage),
+    ToolCall {
+        name: String,
+        args: String,
+        rendered: Vec<Line<'static>>,
+    },
+    Error {
+        text: String,
+        rendered: Vec<Line<'static>>,
+    },
+}
+
 #[derive(Clone)]
 pub struct ZetaStyleSheet;
 impl StyleSheet for ZetaStyleSheet {
@@ -61,7 +80,7 @@ impl StyleSheet for ZetaStyleSheet {
 
 pub struct App<'a> {
     textarea: TextArea<'a>,
-    messages: Vec<MessageLine>,
+    messages: Vec<Message>,
 
     scroll_offset: u16,
     max_scroll_offset: u16,
@@ -87,7 +106,7 @@ impl<'a> App<'a> {
 
         Self {
             textarea,
-            messages: Vec::<MessageLine>::new(),
+            messages: Vec::<Message>::new(),
 
             scroll_offset: 0,
             max_scroll_offset: 0,
@@ -131,16 +150,21 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
         .block(Block::default().borders(Borders::TOP | Borders::BOTTOM));
 
     let mut lines: Vec<Line> = Vec::new();
-    for msg in app.messages.iter() {
+    for msg in &app.messages {
         match msg {
-            MessageLine::User(_, l)
-            | MessageLine::Assistant(_, l)
-            | MessageLine::ToolCall(_, _, l)
-            | MessageLine::Error(_, l) => {
-                lines.extend(l.iter().cloned());
+            Message::Chat(chat) => {
+                lines.extend(chat.rendered.iter().cloned());
+            }
+            Message::ToolCall { rendered, .. } => {
+                lines.extend(rendered.iter().cloned());
+            }
+
+            Message::Error { rendered, .. } => {
+                lines.extend(rendered.iter().cloned());
             }
         }
-        lines.push(Line::from(""));
+
+        lines.push(Line::default());
     }
 
     let logical_line_count = lines
@@ -176,17 +200,21 @@ where
     loop {
         while let Ok(event) = app.event_rx.try_recv() {
             match event {
-                AgentEvent::Token(token) => {
-                    if let Some(MessageLine::Assistant(text, cache)) = app.messages.last_mut() {
-                        text.push_str(&token);
-                        *cache = parse_markdown(text, &app.md_options)
-                    } else {
-                        let mut text = String::new();
-                        text.push_str(&token);
-                        let lines = parse_markdown(&text, &app.md_options);
-                        app.messages.push(MessageLine::Assistant(text, lines));
+                AgentEvent::Token(token) => match app.messages.last_mut() {
+                    Some(Message::Chat(chat)) if matches!(chat.role, Role::Assistant) => {
+                        chat.text.push_str(&token);
+                        chat.dirty = true;
                     }
-                }
+
+                    _ => {
+                        app.messages.push(Message::Chat(ChatMessage {
+                            role: Role::Assistant,
+                            text: token,
+                            rendered: Vec::new(),
+                            dirty: true,
+                        }));
+                    }
+                },
                 AgentEvent::ToolCall(tool_call) => {
                     let lines = vec![
                         Line::from(format!(
@@ -195,11 +223,11 @@ where
                         ))
                         .style(Style::default().fg(Color::Green)),
                     ];
-                    app.messages.push(MessageLine::ToolCall(
-                        tool_call.function.name,
-                        tool_call.function.arguments.to_string(),
-                        lines,
-                    ));
+                    app.messages.push(Message::ToolCall {
+                        name: tool_call.function.name,
+                        args: tool_call.function.arguments.to_string(),
+                        rendered: lines,
+                    });
                 }
                 AgentEvent::ToolCallDone => {}
                 AgentEvent::Done => {
@@ -209,13 +237,17 @@ where
                 AgentEvent::Error(error) => {
                     let lines =
                         vec![Line::from(error.to_string()).style(Style::default().fg(Color::Red))];
-                    app.messages.push(MessageLine::Error(error, lines));
+                    app.messages.push(Message::Error {
+                        text: error,
+                        rendered: lines,
+                    });
                     app.waiting = false;
                 }
             }
         }
 
         app.frame_count = app.frame_count.wrapping_add(1);
+        update_render_cache(app);
         terminal.draw(|f| ui(f, app))?;
         if app.exit {
             return Ok(true);
@@ -259,11 +291,12 @@ where
 
                             app.textarea.clear();
                             app.cmd_tx.send(input.clone()).ok();
-                            let lines = vec![
-                                Line::from(vec![Span::raw(input.clone())])
-                                    .style(Style::default().fg(Color::Cyan).italic()),
-                            ];
-                            app.messages.push(MessageLine::User(input, lines));
+                            app.messages.push(Message::Chat(ChatMessage {
+                                role: Role::User,
+                                text: input,
+                                rendered: Vec::new(),
+                                dirty: true,
+                            }));
                         }
                     }
                     _ => {
@@ -290,4 +323,27 @@ fn parse_markdown<'a>(text: &str, options: &Options<ZetaStyleSheet>) -> Vec<Line
             Line::from(spans).style(line.style)
         })
         .collect()
+}
+
+fn update_render_cache(app: &mut App) {
+    for message in &mut app.messages {
+        match message {
+            Message::Chat(chat) if chat.dirty => {
+                chat.rendered = render_chat(chat, &app.md_options);
+                chat.dirty = false;
+            }
+
+            _ => {}
+        }
+    }
+}
+
+fn render_chat(chat: &ChatMessage, options: &Options<ZetaStyleSheet>) -> Vec<Line<'static>> {
+    match chat.role {
+        Role::User => {
+            vec![Line::from(chat.text.clone()).style(Style::default().fg(Color::Cyan).italic())]
+        }
+
+        Role::Assistant => parse_markdown(&chat.text, options),
+    }
 }
