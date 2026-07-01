@@ -17,10 +17,10 @@ use crate::agent::runtime::AgentEvent;
 const SPINNER_FRAMES: [&str; 4] = ["/", "-", "\\", "|"];
 
 enum MessageLine {
-    User(String),
-    Assistant(String),
-    ToolCall(String, String),
-    Error(String),
+    User(String, Vec<Line<'static>>),
+    Assistant(String, Vec<Line<'static>>),
+    ToolCall(String, String, Vec<Line<'static>>),
+    Error(String, Vec<Line<'static>>),
 }
 #[derive(Clone)]
 pub struct ZetaStyleSheet;
@@ -133,25 +133,11 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
     let mut lines: Vec<Line> = Vec::new();
     for msg in app.messages.iter() {
         match msg {
-            MessageLine::User(text) => {
-                lines.push(
-                    Line::from(vec![Span::raw(text.clone())])
-                        .style(Style::default().fg(Color::Cyan).italic()),
-                );
-            }
-            MessageLine::Assistant(text) => {
-                let md = tui_markdown::from_str_with_options(text, &app.md_options);
-                lines.extend(md.lines);
-            }
-            MessageLine::ToolCall(name, args) => {
-                lines.push(
-                    Line::from(format!("-> {}({})", name, args))
-                        .style(Style::default().fg(Color::Green)),
-                );
-            }
-
-            MessageLine::Error(error) => {
-                lines.push(Line::from(error.to_string()).style(Style::default().fg(Color::Red)));
+            MessageLine::User(_, l)
+            | MessageLine::Assistant(_, l)
+            | MessageLine::ToolCall(_, _, l)
+            | MessageLine::Error(_, l) => {
+                lines.extend(l.iter().cloned());
             }
         }
         lines.push(Line::from(""));
@@ -191,16 +177,28 @@ where
         while let Ok(event) = app.event_rx.try_recv() {
             match event {
                 AgentEvent::Token(token) => {
-                    if let Some(MessageLine::Assistant(text)) = app.messages.last_mut() {
+                    if let Some(MessageLine::Assistant(text, cache)) = app.messages.last_mut() {
                         text.push_str(&token);
+                        *cache = parse_markdown(text, &app.md_options)
                     } else {
-                        app.messages.push(MessageLine::Assistant(token));
+                        let mut text = String::new();
+                        text.push_str(&token);
+                        let lines = parse_markdown(&text, &app.md_options);
+                        app.messages.push(MessageLine::Assistant(text, lines));
                     }
                 }
                 AgentEvent::ToolCall(tool_call) => {
+                    let lines = vec![
+                        Line::from(format!(
+                            "-> {}({})",
+                            tool_call.function.name, tool_call.function.arguments
+                        ))
+                        .style(Style::default().fg(Color::Green)),
+                    ];
                     app.messages.push(MessageLine::ToolCall(
                         tool_call.function.name,
                         tool_call.function.arguments.to_string(),
+                        lines,
                     ));
                 }
                 AgentEvent::ToolCallDone => {}
@@ -209,7 +207,9 @@ where
                 }
 
                 AgentEvent::Error(error) => {
-                    app.messages.push(MessageLine::Error(error));
+                    let lines =
+                        vec![Line::from(error.to_string()).style(Style::default().fg(Color::Red))];
+                    app.messages.push(MessageLine::Error(error, lines));
                     app.waiting = false;
                 }
             }
@@ -259,7 +259,11 @@ where
 
                             app.textarea.clear();
                             app.cmd_tx.send(input.clone()).ok();
-                            app.messages.push(MessageLine::User(input));
+                            let lines = vec![
+                                Line::from(vec![Span::raw(input.clone())])
+                                    .style(Style::default().fg(Color::Cyan).italic()),
+                            ];
+                            app.messages.push(MessageLine::User(input, lines));
                         }
                     }
                     _ => {
@@ -271,4 +275,19 @@ where
             }
         }
     }
+}
+
+fn parse_markdown<'a>(text: &str, options: &Options<ZetaStyleSheet>) -> Vec<Line<'static>> {
+    let md = tui_markdown::from_str_with_options(text, options);
+    md.lines
+        .into_iter()
+        .map(|line| {
+            let spans: Vec<Span<'static>> = line
+                .spans
+                .into_iter()
+                .map(|s| Span::styled(s.content.into_owned(), s.style))
+                .collect();
+            Line::from(spans).style(line.style)
+        })
+        .collect()
 }
