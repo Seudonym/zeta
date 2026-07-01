@@ -1,3 +1,5 @@
+use crossterm::event::EventStream;
+use futures::StreamExt;
 use ratatui::{
     Frame, Terminal,
     backend::Backend,
@@ -120,6 +122,108 @@ impl<'a> App<'a> {
             md_options,
         }
     }
+
+    fn handle_agent(&mut self, event: AgentEvent) {
+        match event {
+            AgentEvent::Token(token) => match self.messages.last_mut() {
+                Some(Message::Chat(chat)) if matches!(chat.role, Role::Assistant) => {
+                    chat.text.push_str(&token);
+                    chat.dirty = true;
+                }
+
+                _ => {
+                    self.messages.push(Message::Chat(ChatMessage {
+                        role: Role::Assistant,
+                        text: token,
+                        rendered: Vec::new(),
+                        dirty: true,
+                    }));
+                }
+            },
+            AgentEvent::ToolCall(tool_call) => {
+                let lines = vec![
+                    Line::from(format!(
+                        "-> {}({})",
+                        tool_call.function.name, tool_call.function.arguments
+                    ))
+                    .style(Style::default().fg(Color::Green)),
+                ];
+                self.messages.push(Message::ToolCall {
+                    name: tool_call.function.name,
+                    args: tool_call.function.arguments.to_string(),
+                    rendered: lines,
+                });
+            }
+            AgentEvent::ToolCallDone => {}
+            AgentEvent::Done => {
+                self.waiting = false;
+            }
+
+            AgentEvent::Error(error) => {
+                let lines =
+                    vec![Line::from(error.to_string()).style(Style::default().fg(Color::Red))];
+                self.messages.push(Message::Error {
+                    text: error,
+                    rendered: lines,
+                });
+                self.waiting = false;
+            }
+        }
+    }
+
+    fn handle_terminal(&mut self, event: Event) {
+        if let Event::Mouse(MouseEvent { kind, .. }) = event {
+            match kind {
+                MouseEventKind::ScrollDown => {
+                    self.auto_scroll = false;
+                    self.scroll_offset = (self.scroll_offset + 1).clamp(0, self.max_scroll_offset);
+                }
+                MouseEventKind::ScrollUp => {
+                    self.auto_scroll = false;
+                    self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                }
+                _ => {}
+            }
+        }
+        if let Event::Key(key) = event {
+            if key.kind == event::KeyEventKind::Release {
+                return;
+            }
+
+            match key.code {
+                KeyCode::Esc => {
+                    self.exit = true;
+                }
+                KeyCode::Enter => {
+                    if key.modifiers.contains(KeyModifiers::SHIFT) {
+                        self.textarea.input(key);
+                    } else {
+                        self.waiting = true;
+                        self.auto_scroll = true;
+                        let input = self.textarea.lines().join("\n").trim().to_string();
+                        if input.is_empty() {
+                            self.waiting = false;
+                            return;
+                        }
+
+                        self.textarea.clear();
+                        self.cmd_tx.send(input.clone()).ok();
+                        self.messages.push(Message::Chat(ChatMessage {
+                            role: Role::User,
+                            text: input,
+                            rendered: Vec::new(),
+                            dirty: true,
+                        }));
+                    }
+                }
+                _ => {
+                    if !self.waiting {
+                        self.textarea.input(key);
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub fn ui(frame: &mut Frame, app: &mut App) {
@@ -193,57 +297,22 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
     frame.render_widget(&app.textarea, input_layout[1]);
 }
 
-pub fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<bool>
+pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App<'_>) -> io::Result<bool>
 where
     io::Error: From<B::Error>,
 {
+    let mut terminal_events = EventStream::new();
+    let mut tick = tokio::time::interval(Duration::from_millis(100));
     loop {
-        while let Ok(event) = app.event_rx.try_recv() {
-            match event {
-                AgentEvent::Token(token) => match app.messages.last_mut() {
-                    Some(Message::Chat(chat)) if matches!(chat.role, Role::Assistant) => {
-                        chat.text.push_str(&token);
-                        chat.dirty = true;
-                    }
-
-                    _ => {
-                        app.messages.push(Message::Chat(ChatMessage {
-                            role: Role::Assistant,
-                            text: token,
-                            rendered: Vec::new(),
-                            dirty: true,
-                        }));
-                    }
-                },
-                AgentEvent::ToolCall(tool_call) => {
-                    let lines = vec![
-                        Line::from(format!(
-                            "-> {}({})",
-                            tool_call.function.name, tool_call.function.arguments
-                        ))
-                        .style(Style::default().fg(Color::Green)),
-                    ];
-                    app.messages.push(Message::ToolCall {
-                        name: tool_call.function.name,
-                        args: tool_call.function.arguments.to_string(),
-                        rendered: lines,
-                    });
-                }
-                AgentEvent::ToolCallDone => {}
-                AgentEvent::Done => {
-                    app.waiting = false;
-                }
-
-                AgentEvent::Error(error) => {
-                    let lines =
-                        vec![Line::from(error.to_string()).style(Style::default().fg(Color::Red))];
-                    app.messages.push(Message::Error {
-                        text: error,
-                        rendered: lines,
-                    });
-                    app.waiting = false;
-                }
+        tokio::select! {
+            Some(agent) = app.event_rx.recv() => {
+                app.handle_agent(agent);
             }
+
+            Some(Ok(term)) = terminal_events.next() => {
+                app.handle_terminal(term);
+            }
+            _ = tick.tick() => {}
         }
 
         app.frame_count = app.frame_count.wrapping_add(1);
@@ -251,61 +320,6 @@ where
         terminal.draw(|f| ui(f, app))?;
         if app.exit {
             return Ok(true);
-        }
-
-        if event::poll(Duration::from_millis(150))? {
-            let event = event::read()?;
-            if let Event::Mouse(MouseEvent { kind, .. }) = event {
-                match kind {
-                    MouseEventKind::ScrollDown => {
-                        app.auto_scroll = false;
-                        app.scroll_offset = (app.scroll_offset + 1).clamp(0, app.max_scroll_offset);
-                    }
-                    MouseEventKind::ScrollUp => {
-                        app.auto_scroll = false;
-                        app.scroll_offset = app.scroll_offset.saturating_sub(1);
-                    }
-                    _ => {}
-                }
-            }
-            if let Event::Key(key) = event {
-                if key.kind == event::KeyEventKind::Release {
-                    continue;
-                }
-
-                match key.code {
-                    KeyCode::Esc => {
-                        app.exit = true;
-                    }
-                    KeyCode::Enter => {
-                        if key.modifiers.contains(KeyModifiers::SHIFT) {
-                            app.textarea.input(key);
-                        } else {
-                            app.waiting = true;
-                            app.auto_scroll = true;
-                            let input = app.textarea.lines().join("\n").trim().to_string();
-                            if input.is_empty() {
-                                app.waiting = false;
-                                continue;
-                            }
-
-                            app.textarea.clear();
-                            app.cmd_tx.send(input.clone()).ok();
-                            app.messages.push(Message::Chat(ChatMessage {
-                                role: Role::User,
-                                text: input,
-                                rendered: Vec::new(),
-                                dirty: true,
-                            }));
-                        }
-                    }
-                    _ => {
-                        if !app.waiting {
-                            app.textarea.input(key);
-                        }
-                    }
-                }
-            }
         }
     }
 }
