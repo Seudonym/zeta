@@ -1,4 +1,7 @@
+use std::{path::Path, str::FromStr};
+
 use color_eyre::eyre::Result;
+use directories::ProjectDirs;
 use futures::StreamExt;
 use rig::{
     agent::{Agent, MultiTurnStreamItem},
@@ -6,7 +9,10 @@ use rig::{
     message::{Message, ToolCall},
     streaming::{StreamedAssistantContent, StreamedUserContent, StreamingChat},
 };
+use std::fs;
+use thiserror::Error;
 use tokio::sync::mpsc::UnboundedSender;
+use uuid::Uuid;
 
 pub enum AgentEvent {
     Token(String),
@@ -24,6 +30,20 @@ where
     agent: Agent<M>,
     chat_history: Vec<Message>,
     sender: UnboundedSender<AgentEvent>,
+
+    session_id: Uuid,
+}
+
+#[derive(Debug, Error)]
+pub enum AgentRuntimeError {
+    #[error("Failed to read directory: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Failed to serialize/deserialize: {0}")]
+    Serde(#[from] serde_json::Error),
+
+    #[error("Invalid session ID: {0}")]
+    Uuid(#[from] uuid::Error),
 }
 
 impl<M> AgentRuntime<M>
@@ -31,10 +51,13 @@ where
     M: CompletionModel + 'static,
 {
     pub fn new(agent: Agent<M>, sender: UnboundedSender<AgentEvent>) -> Self {
+        let session_id = Uuid::now_v7();
         Self {
             agent,
             chat_history: Vec::<Message>::new(),
             sender,
+
+            session_id,
         }
     }
 
@@ -71,6 +94,39 @@ where
                 }
                 _ => {}
             }
+        }
+
+        Ok(())
+    }
+
+    pub fn save_session(&mut self) -> Result<(), AgentRuntimeError> {
+        if let Some(proj_dirs) = ProjectDirs::from("", "", "zeta") {
+            let cache = proj_dirs.cache_dir();
+            fs::create_dir_all(cache)?;
+            let filename = format!("{}.json", self.session_id.to_string());
+            let filename = Path::new(&filename);
+            let abs_path = cache.join(filename);
+
+            let json_string = serde_json::to_string(&self.chat_history)?;
+            fs::write(abs_path, json_string)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn load_session(&mut self, session_id: String) -> Result<(), AgentRuntimeError> {
+        let uuid = Uuid::from_str(session_id.as_str())?;
+        if let Some(proj_dirs) = ProjectDirs::from("", "", "zeta") {
+            let cache = proj_dirs.cache_dir();
+            let filename = format!("{}.json", uuid);
+            let filename = Path::new(&filename);
+            let abs_path = cache.join(filename);
+
+            let file = fs::File::open(abs_path)?;
+            let chat_history: Vec<Message> = serde_json::from_reader(file)?;
+
+            self.session_id = uuid;
+            self.chat_history = chat_history;
         }
 
         Ok(())
