@@ -26,7 +26,7 @@ enum Role {
 struct ChatMessage {
     role: Role,
     text: String,
-    rendered: Vec<Line<'static>>,
+    rendered: Text<'static>,
     dirty: bool,
 }
 
@@ -35,14 +35,14 @@ enum Message {
     ToolCall {
         name: String,
         args: String,
-        rendered: Vec<Line<'static>>,
+        rendered: Text<'static>,
     },
     Error {
         text: String,
-        rendered: Vec<Line<'static>>,
+        rendered: Text<'static>,
     },
     Banner {
-        rendered: Vec<Line<'static>>,
+        rendered: Text<'static>,
     },
 }
 
@@ -118,12 +118,8 @@ impl<'a> App<'a> {
      █
 ";
 
-        let banner_lines = banner
-            .split('\n')
-            .map(|line| Line::from(line).style(Style::default()))
-            .collect();
         let banner_message = Message::Banner {
-            rendered: banner_lines,
+            rendered: Text::from(banner),
         };
 
         Self {
@@ -155,23 +151,26 @@ impl<'a> App<'a> {
                     self.messages.push(Message::Chat(ChatMessage {
                         role: Role::Assistant,
                         text: token,
-                        rendered: Vec::new(),
+                        rendered: Text::default(),
                         dirty: true,
                     }));
                 }
             },
             AgentEvent::ToolCall(tool_call) => {
-                let lines = vec![
-                    Line::from(format!(
+                let style = Style::default().fg(Color::Green);
+                let rendered = Text::from(
+                    format!(
                         "-> {}({})",
                         tool_call.function.name, tool_call.function.arguments
-                    ))
-                    .style(Style::default().fg(Color::Green)),
-                ];
+                    )
+                    .lines()
+                    .map(|l| Line::from(l.to_string()).style(style))
+                    .collect::<Vec<_>>(),
+                );
                 self.messages.push(Message::ToolCall {
                     name: tool_call.function.name,
                     args: tool_call.function.arguments.to_string(),
-                    rendered: lines,
+                    rendered,
                 });
             }
             AgentEvent::ToolCallDone => {}
@@ -180,11 +179,16 @@ impl<'a> App<'a> {
             }
 
             AgentEvent::Error(error) => {
-                let lines =
-                    vec![Line::from(error.to_string()).style(Style::default().fg(Color::Red))];
+                let style = Style::default().fg(Color::Red);
+                let rendered = Text::from(
+                    error
+                        .lines()
+                        .map(|l| Line::from(l.to_string()).style(style))
+                        .collect::<Vec<_>>(),
+                );
                 self.messages.push(Message::Error {
                     text: error,
-                    rendered: lines,
+                    rendered,
                 });
                 self.waiting = false;
             }
@@ -231,7 +235,7 @@ impl<'a> App<'a> {
                         self.messages.push(Message::Chat(ChatMessage {
                             role: Role::User,
                             text: input,
-                            rendered: Vec::new(),
+                            rendered: Text::default(),
                             dirty: true,
                         }));
                     }
@@ -279,28 +283,21 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
             .border_style(Style::default().fg(Color::DarkGray)),
     );
 
-    let mut lines: Vec<Line> = Vec::new();
+    let mut text: Text<'static> = Text::default();
     for msg in &app.messages {
-        match msg {
-            Message::Chat(chat) => {
-                lines.extend(chat.rendered.iter().cloned());
-            }
-            Message::Banner { rendered, .. } => {
-                lines.extend(rendered.iter().cloned());
-            }
-            Message::ToolCall { rendered, .. } => {
-                lines.extend(rendered.iter().cloned());
-            }
+        let rendered: &Text<'static> = match msg {
+            Message::Chat(chat) => &chat.rendered,
+            Message::Banner { rendered } => rendered,
+            Message::ToolCall { rendered, .. } => rendered,
+            Message::Error { rendered, .. } => rendered,
+        };
 
-            Message::Error { rendered, .. } => {
-                lines.extend(rendered.iter().cloned());
-            }
-        }
-
-        lines.push(Line::default());
+        text.lines.extend(rendered.lines.iter().cloned());
+        text.lines.push(Line::default());
     }
 
-    let logical_line_count = lines
+    let logical_line_count = text
+        .lines
         .iter()
         .map(|line| {
             let w = line.width();
@@ -316,7 +313,7 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
         app.scroll_offset = app.max_scroll_offset;
     }
 
-    let messages_para = Paragraph::new(Text::from(lines))
+    let messages_para = Paragraph::new(text)
         .scroll((app.scroll_offset, 0))
         .block(Block::default().padding(Padding::new(0, 0, 1, 1)))
         .wrap(Wrap { trim: false });
@@ -353,9 +350,10 @@ where
     }
 }
 
-fn parse_markdown(text: &str, options: &Options<ZetaStyleSheet>) -> Vec<Line<'static>> {
+fn parse_markdown(text: &str, options: &Options<ZetaStyleSheet>) -> Text<'static> {
     let md = tui_markdown::from_str_with_options(text, options);
-    md.lines
+    let lines: Vec<Line<'static>> = md
+        .lines
         .into_iter()
         .map(|line| {
             let spans: Vec<Span<'static>> = line
@@ -365,7 +363,8 @@ fn parse_markdown(text: &str, options: &Options<ZetaStyleSheet>) -> Vec<Line<'st
                 .collect();
             Line::from(spans).style(line.style)
         })
-        .collect()
+        .collect();
+    Text::from(lines)
 }
 
 fn update_render_cache(app: &mut App) {
@@ -381,10 +380,16 @@ fn update_render_cache(app: &mut App) {
     }
 }
 
-fn render_chat(chat: &ChatMessage, options: &Options<ZetaStyleSheet>) -> Vec<Line<'static>> {
+fn render_chat(chat: &ChatMessage, options: &Options<ZetaStyleSheet>) -> Text<'static> {
     match chat.role {
         Role::User => {
-            vec![Line::from(chat.text.clone()).style(Style::default().fg(Color::Cyan).italic())]
+            let style = Style::default().fg(Color::Cyan).italic();
+            let lines: Vec<Line<'static>> = chat
+                .text
+                .lines()
+                .map(|l| Line::from(l.to_string()).style(style))
+                .collect();
+            Text::from(lines)
         }
 
         Role::Assistant => parse_markdown(&chat.text, options),
