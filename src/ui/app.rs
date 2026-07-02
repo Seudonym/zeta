@@ -16,7 +16,7 @@ use tui_markdown::{Options, StyleSheet};
 
 use crate::agent::runtime::AgentEvent;
 
-const SPINNER_FRAMES: [&str; 4] = ["/", "-", "\\", "|"];
+const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 enum Role {
     User,
@@ -39,6 +39,9 @@ enum Message {
     },
     Error {
         text: String,
+        rendered: Vec<Line<'static>>,
+    },
+    Banner {
         rendered: Vec<Line<'static>>,
     },
 }
@@ -101,14 +104,31 @@ impl<'a> App<'a> {
         let mut textarea = TextArea::default();
         textarea.set_cursor_line_style(Style::default());
         textarea.set_placeholder_text("Input goes here");
-        textarea.set_placeholder_style(Style::default().italic());
+        textarea.set_placeholder_style(Style::default().italic().fg(Color::DarkGray));
         textarea.set_wrap_mode(ratatui_textarea::WrapMode::Word);
 
         let md_options = Options::new(ZetaStyleSheet);
 
+        let banner = "
+ ▄▄▄▄▄           ▄                  
+  ▄█▀    ▄▄▄   ▄▄█▄▄   ▄▄▄          model: deepseek/deepseek-v4-flash
+ ▄▀     █▀  █    █    ▀   █         toolsets: 
+ █      █▀▀▀▀    █    ▄▀▀▀█         skills: 
+ ▀█▄▄   ▀█▄▄▀    ▀▄▄  ▀▄▄▀█         usage:  
+     █
+";
+
+        let banner_lines = banner
+            .split('\n')
+            .map(|line| Line::from(line).style(Style::default()))
+            .collect();
+        let banner_message = Message::Banner {
+            rendered: banner_lines,
+        };
+
         Self {
             textarea,
-            messages: Vec::<Message>::new(),
+            messages: vec![banner_message],
 
             scroll_offset: 0,
             max_scroll_offset: 0,
@@ -200,7 +220,7 @@ impl<'a> App<'a> {
                     } else {
                         self.waiting = true;
                         self.auto_scroll = true;
-                        let input = self.textarea.lines().join("\n").trim().to_string();
+                        let input = ">>> ".to_string() + &self.textarea.lines().join("\n");
                         if input.is_empty() {
                             self.waiting = false;
                             return;
@@ -240,8 +260,11 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
         .constraints([Constraint::Length(3), Constraint::Min(0)])
         .split(chunks[1]);
 
-    app.textarea
-        .set_block(Block::new().borders(Borders::TOP | Borders::BOTTOM));
+    app.textarea.set_block(
+        Block::new()
+            .borders(Borders::TOP | Borders::BOTTOM)
+            .border_style(Style::default().fg(Color::DarkGray)),
+    );
 
     let indicator_text = if app.waiting {
         let frame_idx = app.frame_count % SPINNER_FRAMES.len();
@@ -250,14 +273,20 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
         ">"
     };
 
-    let indicator = Paragraph::new(Text::from(indicator_text))
-        .block(Block::default().borders(Borders::TOP | Borders::BOTTOM));
+    let indicator = Paragraph::new(Text::from(indicator_text)).block(
+        Block::default()
+            .borders(Borders::TOP | Borders::BOTTOM)
+            .border_style(Style::default().fg(Color::DarkGray)),
+    );
 
     let mut lines: Vec<Line> = Vec::new();
     for msg in &app.messages {
         match msg {
             Message::Chat(chat) => {
                 lines.extend(chat.rendered.iter().cloned());
+            }
+            Message::Banner { rendered, .. } => {
+                lines.extend(rendered.iter().cloned());
             }
             Message::ToolCall { rendered, .. } => {
                 lines.extend(rendered.iter().cloned());
@@ -324,7 +353,7 @@ where
     }
 }
 
-fn parse_markdown<'a>(text: &str, options: &Options<ZetaStyleSheet>) -> Vec<Line<'static>> {
+fn parse_markdown(text: &str, options: &Options<ZetaStyleSheet>) -> Vec<Line<'static>> {
     let md = tui_markdown::from_str_with_options(text, options);
     md.lines
         .into_iter()
