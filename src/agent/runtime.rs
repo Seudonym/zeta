@@ -14,6 +14,7 @@ use thiserror::Error;
 use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
 
+#[derive(Debug)]
 pub enum AgentEvent {
     Token(String),
     ToolCall(ToolCall),
@@ -80,7 +81,6 @@ where
                     StreamedAssistantContent::ToolCall { tool_call, .. } => {
                         self.sender.send(AgentEvent::ToolCall(tool_call))?
                     }
-                    StreamedAssistantContent::Final(_) => self.sender.send(AgentEvent::Done)?,
                     _ => {}
                 },
                 MultiTurnStreamItem::StreamUserItem(content) => match content {
@@ -95,6 +95,7 @@ where
                 _ => {}
             }
         }
+        self.sender.send(AgentEvent::Done)?;
 
         Ok(())
     }
