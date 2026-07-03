@@ -2,7 +2,9 @@ use color_eyre::eyre::{Context, Result};
 use crossterm::execute;
 use crossterm::style::{Color, SetForegroundColor};
 use rig::{client::CompletionClient, providers::gemini, tool::ToolDyn};
+use serde_json::Value;
 use std::io::{self, Write, stdout};
+use std::iter::MapWhile;
 use thiserror::Error;
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -103,10 +105,9 @@ fn handle_agent_event(event: AgentEvent) -> Result<(), CliError> {
 
         AgentEvent::ToolCall(tool_call) => {
             execute!(stdout(), SetForegroundColor(Color::DarkCyan))?;
-            println!(
-                "[+] {}({})\n",
-                tool_call.function.name, tool_call.function.arguments
-            );
+            let fn_name = to_pascal_case(&tool_call.function.name);
+            let fn_args = to_str_arguments(tool_call.function.arguments);
+            println!("[+] {} {}\n", fn_name, fn_args);
             execute!(stdout(), SetForegroundColor(Color::Reset))?;
         }
 
@@ -118,4 +119,32 @@ fn handle_agent_event(event: AgentEvent) -> Result<(), CliError> {
     }
 
     Ok(())
+}
+
+fn to_pascal_case(s: &str) -> String {
+    s.split(|c: char| !c.is_alphanumeric()) // Split at underscores, spaces, hyphens, etc.
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(f) => f.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
+            }
+        })
+        .collect()
+}
+
+fn to_str_arguments(args: serde_json::value::Value) -> String {
+    let arguments = args.as_object().expect("failed to parse tool call args");
+    arguments
+        .iter()
+        .map(|(_, value)| {
+            if let Some(string) = value.as_str() {
+                string.to_string()
+            } else {
+                value.to_string()
+            }
+        })
+        .collect::<Vec<String>>()
+        .join(", ")
 }
