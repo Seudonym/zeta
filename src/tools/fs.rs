@@ -59,7 +59,6 @@ fn truncate(s: &str, max_chars: usize) -> String {
         pattern = "The regex or literal pattern to search for",
         path = "Optional directory to search in (defaults to current directory)",
         filetype = "Optional file type filter (e.g., 'py', 'rs', 'js')",
-        case_insensitive = "Optional: set true to ignore case"
     )
 )]
 pub async fn grep(
@@ -67,6 +66,9 @@ pub async fn grep(
     path: Option<String>,
     filetype: Option<String>,
 ) -> Result<String, FsError> {
+    let path = path.filter(|s| !s.is_empty());
+    let filetype = filetype.filter(|s| !s.is_empty());
+
     let mut cmd = Command::new("rg");
     cmd.arg("--line-number")
         .arg("--color=never")
@@ -75,7 +77,7 @@ pub async fn grep(
         .arg("--max-count=200"); // cap matches per file so output stays sane
 
     if let Some(t) = filetype {
-        cmd.arg("-t").arg(t);
+        cmd.arg("-g").arg(format!("*.{}", t)); // filtype fuckery with ripgrep
     }
 
     cmd.arg("--").arg(&pattern);
@@ -111,6 +113,9 @@ pub async fn find_files(
     path: Option<String>,
     filetype: Option<String>,
 ) -> Result<String, FsError> {
+    let path = path.filter(|s| !s.is_empty());
+    let filetype = filetype.filter(|s| !s.is_empty());
+
     let mut cmd = Command::new("fd");
     cmd.arg("--color=never");
     if let Some(ext) = filetype {

@@ -6,7 +6,7 @@ use futures::StreamExt;
 use rig::{
     agent::{Agent, MultiTurnStreamItem},
     completion::CompletionModel,
-    message::{Message, ToolCall},
+    message::{Message, ToolCall, ToolResultContent},
     streaming::{StreamedAssistantContent, StreamedUserContent, StreamingChat},
 };
 use std::fs;
@@ -18,7 +18,7 @@ use uuid::Uuid;
 pub enum AgentEvent {
     Token(String),
     ToolCall(ToolCall),
-    ToolCallDone,
+    ToolResult { tool_name: String, content: String },
     Done,
 
     Error(String),
@@ -65,12 +65,15 @@ where
     pub async fn chat(&mut self, input: String) -> Result<()> {
         let history = self.chat_history.clone();
         let mut stream = self.agent.stream_chat(input, history).await;
+        let mut last_tool_name = String::new();
+
         while let Some(chunk_result) = stream.next().await {
             let chunk = match chunk_result {
                 Ok(c) => c,
                 Err(e) => {
-                    self.sender.send(AgentEvent::Error(e.to_string()))?;
-                    return Err(e.into());
+                    let _ = self.sender.send(AgentEvent::Error(e.to_string()));
+                    let _ = self.sender.send(AgentEvent::Done);
+                    return Ok(());
                 }
             };
             match chunk {
@@ -79,13 +82,26 @@ where
                         self.sender.send(AgentEvent::Token(msg.text))?
                     }
                     StreamedAssistantContent::ToolCall { tool_call, .. } => {
+                        last_tool_name = tool_call.function.name.clone();
                         self.sender.send(AgentEvent::ToolCall(tool_call))?
                     }
                     _ => {}
                 },
                 MultiTurnStreamItem::StreamUserItem(content) => match content {
-                    StreamedUserContent::ToolResult { .. } => {
-                        self.sender.send(AgentEvent::ToolCallDone)?
+                    StreamedUserContent::ToolResult { tool_result, .. } => {
+                        let content = tool_result
+                            .content
+                            .iter()
+                            .filter_map(|c| match c {
+                                ToolResultContent::Text(t) => Some(t.text.as_str()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        self.sender.send(AgentEvent::ToolResult {
+                            tool_name: last_tool_name.clone(),
+                            content,
+                        })?;
                     }
                 },
                 MultiTurnStreamItem::FinalResponse(fin) => {

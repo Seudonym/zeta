@@ -97,7 +97,7 @@ fn handle_input(input: &mut String, cmd_tx: &UnboundedSender<String>) -> Result<
 }
 
 fn handle_agent_event(event: AgentEvent) -> Result<(), CliError> {
-    dbg!(&event);
+    // dbg!(&event);
     match event {
         AgentEvent::Token(token) => {
             print!("{}", token);
@@ -108,7 +108,21 @@ fn handle_agent_event(event: AgentEvent) -> Result<(), CliError> {
             execute!(stdout(), SetForegroundColor(Color::DarkCyan))?;
             let fn_name = to_pascal_case(&tool_call.function.name);
             let fn_args = to_str_arguments(tool_call.function.arguments);
-            println!("[+] {} {}\n", fn_name, fn_args);
+            println!("[+] {} {}", fn_name, fn_args);
+            execute!(stdout(), SetForegroundColor(Color::Reset))?;
+        }
+
+        AgentEvent::ToolResult { content, .. } => {
+            execute!(stdout(), SetForegroundColor(Color::DarkGrey))?;
+            let truncated = truncate_result(&content, 800);
+            println!("{}", indent(&truncated, 6));
+            execute!(stdout(), SetForegroundColor(Color::Reset))?;
+            println!();
+        }
+
+        AgentEvent::Error(err) => {
+            execute!(stdout(), SetForegroundColor(Color::Red))?;
+            eprintln!("\n[error] {}\n", err);
             execute!(stdout(), SetForegroundColor(Color::Reset))?;
         }
 
@@ -116,7 +130,6 @@ fn handle_agent_event(event: AgentEvent) -> Result<(), CliError> {
             print!("\n\n>>> ");
             io::stdout().flush()?;
         }
-        _ => {}
     }
 
     Ok(())
@@ -144,11 +157,29 @@ fn to_str_arguments(args: serde_json::value::Value) -> String {
         .iter()
         .map(|(key, value)| {
             if let Some(string) = value.as_str() {
-                format!("{}: {}", key, string.to_string())
+                format!("({}: {})", key, string.to_string())
             } else {
-                format!("{}: {}", key, value.to_string())
+                format!("({}: {})", key, value.to_string())
             }
         })
         .collect::<Vec<String>>()
         .join(", ")
+}
+
+fn truncate_result(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max_chars).collect();
+        out.push_str("\n      ... [truncated]");
+        out
+    }
+}
+
+fn indent(s: &str, spaces: usize) -> String {
+    let pad: String = " ".repeat(spaces);
+    s.lines()
+        .map(|line| format!("{}{}", pad, line))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
