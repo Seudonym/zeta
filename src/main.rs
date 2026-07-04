@@ -2,9 +2,7 @@ use color_eyre::eyre::{Context, Result};
 use crossterm::execute;
 use crossterm::style::{Color, SetForegroundColor};
 use rig::{client::CompletionClient, providers::gemini, tool::ToolDyn};
-use serde_json::Value;
 use std::io::{self, Write, stdout};
-use std::iter::MapWhile;
 use thiserror::Error;
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -14,7 +12,6 @@ mod agent;
 mod tools;
 
 use agent::runtime::{AgentEvent, AgentRuntime};
-use tools::fs::{ListFiles, ReadFile};
 
 #[derive(Error, Debug)]
 enum CliError {
@@ -38,10 +35,14 @@ async fn main() -> Result<()> {
     color_eyre::install()?;
     let api_key =
         std::env::var("GEMINI_API_KEY").wrap_err("GEMINI_API_KEY variable is missing in .envrc")?;
-    let tools: Vec<Box<dyn ToolDyn>> = vec![Box::new(ListFiles), Box::new(ReadFile)];
+
+    let mut tools: Vec<Box<dyn ToolDyn>> = Vec::new();
+    tools.extend(tools::fs::toolset());
+
     let agent = gemini::Client::new(api_key)?
         .agent("gemini-3.1-flash-lite")
         .tools(tools)
+        .default_max_turns(10)
         .preamble(&fs::read_to_string("./src/md/SYSTEM.md").await?)
         .build();
 
@@ -136,13 +137,16 @@ fn to_pascal_case(s: &str) -> String {
 
 fn to_str_arguments(args: serde_json::value::Value) -> String {
     let arguments = args.as_object().expect("failed to parse tool call args");
-    arguments
+    let mut args_vec: Vec<_> = arguments.iter().collect();
+    args_vec.sort_by_key(|&(key, _)| key);
+
+    args_vec
         .iter()
-        .map(|(_, value)| {
+        .map(|(key, value)| {
             if let Some(string) = value.as_str() {
-                string.to_string()
+                format!("{}: {}", key, string.to_string())
             } else {
-                value.to_string()
+                format!("{}: {}", key, value.to_string())
             }
         })
         .collect::<Vec<String>>()
