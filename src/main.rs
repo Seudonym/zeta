@@ -10,6 +10,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 mod agent;
 mod tools;
+mod util;
 
 use agent::runtime::{AgentEvent, AgentRuntime};
 
@@ -114,8 +115,8 @@ fn handle_agent_event(event: AgentEvent) -> Result<(), CliError> {
 
         AgentEvent::ToolResult { content, .. } => {
             execute!(stdout(), SetForegroundColor(Color::DarkGrey))?;
-            let truncated = truncate_result(&content, 800);
-            println!("{}", indent(&truncated, 6));
+            let truncated = util::truncate(&content, 800);
+            println!("{}", util::indent(&truncated, 6));
             execute!(stdout(), SetForegroundColor(Color::Reset))?;
             println!();
         }
@@ -164,22 +165,4 @@ fn to_str_arguments(args: serde_json::value::Value) -> String {
         })
         .collect::<Vec<String>>()
         .join(", ")
-}
-
-fn truncate_result(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        s.to_string()
-    } else {
-        let mut out: String = s.chars().take(max_chars).collect();
-        out.push_str("\n      ... [truncated]");
-        out
-    }
-}
-
-fn indent(s: &str, spaces: usize) -> String {
-    let pad: String = " ".repeat(spaces);
-    s.lines()
-        .map(|line| format!("{}{}", pad, line))
-        .collect::<Vec<_>>()
-        .join("\n")
 }

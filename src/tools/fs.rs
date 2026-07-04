@@ -1,3 +1,4 @@
+use crate::util;
 use color_eyre::eyre::Result;
 use rig::tool::ToolDyn;
 use std::{fs, process::Stdio};
@@ -91,7 +92,7 @@ pub async fn grep(
 
     // rg exit codes: 0 = match found, 1 = no match, 2 = error
     match output.status.code() {
-        Some(0) => Ok(truncate(&String::from_utf8_lossy(&output.stdout), 20_000)),
+        Some(0) => Ok(String::from_utf8_lossy(&output.stdout).to_string()),
         Some(1) => Ok("No matches found.".to_string()),
         _ => Err(FsError::CommandFailed(format!(
             "ripgrep failed: {}",
@@ -137,7 +138,7 @@ pub async fn find_files(
         if trimmed.is_empty() {
             Ok("No matching files found.".to_string())
         } else {
-            Ok(truncate(trimmed, 20_000))
+            Ok(trimmed.to_string())
         }
     } else {
         Err(FsError::CommandFailed(format!(
