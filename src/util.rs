@@ -15,3 +15,16 @@ pub fn indent(s: &str, spaces: usize) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+
+pub fn to_pascal_case(s: &str) -> String {
+    s.split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(f) => f.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
+            }
+        })
+        .collect()
+}

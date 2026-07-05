@@ -39,6 +39,7 @@ async fn main() -> Result<()> {
 
     let mut tools: Vec<Box<dyn ToolDyn>> = Vec::new();
     tools.extend(tools::fs::toolset());
+    tools.extend(tools::shell::toolset());
 
     let agent = gemini::Client::new(api_key)?
         .agent("gemini-3.1-flash-lite")
@@ -107,7 +108,7 @@ fn handle_agent_event(event: AgentEvent) -> Result<(), CliError> {
 
         AgentEvent::ToolCall(tool_call) => {
             execute!(stdout(), SetForegroundColor(Color::DarkCyan))?;
-            let fn_name = to_pascal_case(&tool_call.function.name);
+            let fn_name = util::to_pascal_case(&tool_call.function.name);
             let fn_args = to_str_arguments(tool_call.function.arguments);
             println!("[+] {} {}", fn_name, fn_args);
             execute!(stdout(), SetForegroundColor(Color::Reset))?;
@@ -134,19 +135,6 @@ fn handle_agent_event(event: AgentEvent) -> Result<(), CliError> {
     }
 
     Ok(())
-}
-
-fn to_pascal_case(s: &str) -> String {
-    s.split(|c: char| !c.is_alphanumeric()) // Split at underscores, spaces, hyphens, etc.
-        .filter(|word| !word.is_empty())
-        .map(|word| {
-            let mut chars = word.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(f) => f.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
-            }
-        })
-        .collect()
 }
 
 fn to_str_arguments(args: serde_json::value::Value) -> String {
