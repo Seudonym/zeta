@@ -40,6 +40,7 @@ async fn main() -> Result<()> {
     let mut tools: Vec<Box<dyn ToolDyn>> = Vec::new();
     tools.extend(tools::fs::toolset());
     tools.extend(tools::shell::toolset());
+    tools.extend(tools::memory::toolset());
 
     let agent = gemini::Client::new(api_key)?
         .agent("gemini-3.1-flash-lite")
