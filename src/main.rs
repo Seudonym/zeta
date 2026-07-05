@@ -42,11 +42,13 @@ async fn main() -> Result<()> {
     tools.extend(tools::shell::toolset());
     tools.extend(tools::memory::toolset());
 
+    let base_prompt = fs::read_to_string("./src/md/SYSTEM.md").await?;
+    let system_prompt = construct_system_prompt(base_prompt);
     let agent = gemini::Client::new(api_key)?
         .agent("gemini-3.1-flash-lite")
         .tools(tools)
         .default_max_turns(10)
-        .preamble(&fs::read_to_string("./src/md/SYSTEM.md").await?)
+        .preamble(&system_prompt)
         .build();
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<AgentEvent>();
@@ -136,6 +138,14 @@ fn handle_agent_event(event: AgentEvent) -> Result<(), CliError> {
     }
 
     Ok(())
+}
+
+fn construct_system_prompt(preamble: String) -> String {
+    let cwd = std::env::current_dir()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    format!("{}\nCurrent directory: {}", preamble, cwd)
 }
 
 fn to_str_arguments(args: serde_json::value::Value) -> String {
