@@ -1,7 +1,8 @@
 use color_eyre::eyre::{Context, Result};
 use crossterm::execute;
 use crossterm::style::{Color, SetForegroundColor};
-use rig::{client::CompletionClient, providers::gemini, tool::ToolDyn};
+use rig::providers::gemini;
+use rig::{client::CompletionClient, providers::deepseek, tool::ToolDyn};
 use std::io::{self, Write, stdout};
 use thiserror::Error;
 use tokio::fs;
@@ -35,17 +36,21 @@ const BANNER: &str = "
 async fn main() -> Result<()> {
     color_eyre::install()?;
     let api_key =
-        std::env::var("GEMINI_API_KEY").wrap_err("GEMINI_API_KEY variable is missing in .envrc")?;
+        // std::env::var("GEMINI_API_KEY").wrap_err("GEMINI_API_KEY variable is missing in .envrc")?;
+    std::env::var("DEEPSEEK_API_KEY").wrap_err("DEEPSEEK_API_KEY variable is missing in .envrc")?;
 
     let mut tools: Vec<Box<dyn ToolDyn>> = Vec::new();
     tools.extend(tools::fs::toolset());
     tools.extend(tools::shell::toolset());
     tools.extend(tools::memory::toolset());
+    tools.extend(tools::web::toolset());
 
     let base_prompt = fs::read_to_string("./src/md/SYSTEM.md").await?;
     let system_prompt = construct_system_prompt(base_prompt);
-    let agent = gemini::Client::new(api_key)?
-        .agent("gemini-3.1-flash-lite")
+    let agent = deepseek::Client::new(api_key)?
+        .agent("deepseek-v4-flash")
+        // let agent = gemini::Client::new(api_key)?
+        //     .agent("gemini-3.5-flash")
         .tools(tools)
         .default_max_turns(10)
         .preamble(&system_prompt)
@@ -95,7 +100,6 @@ fn handle_input(input: &mut String, cmd_tx: &UnboundedSender<String>) -> Result<
         io::stdout().flush()?;
         return Ok(());
     }
-    println!();
 
     cmd_tx.send(clean_input)?;
     Ok(())
@@ -113,7 +117,7 @@ fn handle_agent_event(event: AgentEvent) -> Result<(), CliError> {
             execute!(stdout(), SetForegroundColor(Color::DarkCyan))?;
             let fn_name = util::to_pascal_case(&tool_call.function.name);
             let fn_args = to_str_arguments(tool_call.function.arguments);
-            println!("[+] {} {}", fn_name, fn_args);
+            println!("\n[+] {} {}", fn_name, fn_args);
             execute!(stdout(), SetForegroundColor(Color::Reset))?;
         }
 
@@ -132,7 +136,7 @@ fn handle_agent_event(event: AgentEvent) -> Result<(), CliError> {
         }
 
         AgentEvent::Done => {
-            print!("\n\n>>> ");
+            print!("\n>>> ");
             io::stdout().flush()?;
         }
     }

@@ -42,9 +42,9 @@ pub struct SearchResult {
 
 #[rig::tool_macro(
     description = "Search the memory files by keyword",
-    params(query = "The query or keyword to search for in memory")
+    params(query = "A list of queries to search for")
 )]
-pub async fn search_memories(query: String) -> Result<SearchResult, MemoryError> {
+pub async fn search_memories(query: Vec<String>) -> Result<SearchResult, MemoryError> {
     let memory_dir = get_memory_dir()?;
     if !memory_dir.exists() {
         return Ok(SearchResult { matches: vec![] });
@@ -54,7 +54,7 @@ pub async fn search_memories(query: String) -> Result<SearchResult, MemoryError>
         .arg("--color")
         .arg("never")
         .arg("--ignore-case")
-        .arg(&query)
+        .arg(query.join("|"))
         .arg(&memory_dir)
         .arg("-X")
         .arg("printf")
