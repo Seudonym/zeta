@@ -18,7 +18,7 @@ use uuid::Uuid;
 pub enum AgentEvent {
     Token(String),
     ToolCall(ToolCall),
-    ToolResult { tool_name: String, content: String },
+    ToolResult { content: String },
     Done,
 
     Error(String),
@@ -65,7 +65,6 @@ where
     pub async fn chat(&mut self, input: String) -> Result<()> {
         let history = self.chat_history.clone();
         let mut stream = self.agent.stream_chat(input, history).await;
-        let mut last_tool_name = String::new();
 
         while let Some(chunk_result) = stream.next().await {
             let chunk = match chunk_result {
@@ -82,7 +81,6 @@ where
                         self.sender.send(AgentEvent::Token(msg.text))?
                     }
                     StreamedAssistantContent::ToolCall { tool_call, .. } => {
-                        last_tool_name = tool_call.function.name.clone();
                         self.sender.send(AgentEvent::ToolCall(tool_call))?
                     }
                     _ => {}
@@ -98,10 +96,7 @@ where
                             })
                             .collect::<Vec<_>>()
                             .join("\n");
-                        self.sender.send(AgentEvent::ToolResult {
-                            tool_name: last_tool_name.clone(),
-                            content,
-                        })?;
+                        self.sender.send(AgentEvent::ToolResult { content })?;
                     }
                 },
                 MultiTurnStreamItem::FinalResponse(fin) => {

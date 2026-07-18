@@ -28,3 +28,29 @@ pub fn to_pascal_case(s: &str) -> String {
         })
         .collect()
 }
+
+pub fn construct_system_prompt(preamble: String) -> String {
+    let cwd = std::env::current_dir()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    format!("{}\nCurrent directory: {}", preamble, cwd)
+}
+
+pub fn to_str_arguments(args: serde_json::value::Value) -> String {
+    let arguments = args.as_object().expect("failed to parse tool call args");
+    let mut args_vec: Vec<_> = arguments.iter().collect();
+    args_vec.sort_by_key(|&(key, _)| key);
+
+    args_vec
+        .iter()
+        .map(|(key, value)| {
+            if let Some(string) = value.as_str() {
+                format!("({}: {})", key, string.to_string())
+            } else {
+                format!("({}: {})", key, value.to_string())
+            }
+        })
+        .collect::<Vec<String>>()
+        .join(", ")
+}

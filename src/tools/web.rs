@@ -33,7 +33,7 @@ pub struct TavilySearchResult {
     score: f32,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct TavilyResponse {
     query: String,
     answer: Option<String>,
@@ -44,7 +44,7 @@ pub struct TavilyResponse {
     description = "Search the web for a query",
     params(query = "The query to search for")
 )]
-pub async fn web_search(query: String) -> Result<Vec<TavilySearchResult>, WebSearchError> {
+pub async fn web_search(query: String) -> Result<TavilyResponse, WebSearchError> {
     let url = "https://api.tavily.com/search";
     let api_key = std::env::var("TAVILY_API_KEY")?;
 
@@ -67,16 +67,5 @@ pub async fn web_search(query: String) -> Result<Vec<TavilySearchResult>, WebSea
 
     let parsed_response: TavilyResponse = response.json().await?;
 
-    let results = parsed_response
-        .results
-        .into_iter()
-        .map(|res| TavilySearchResult {
-            title: res.title,
-            url: res.url,
-            content: res.content,
-            score: res.score,
-        })
-        .collect();
-
-    Ok(results)
+    Ok(parsed_response)
 }
