@@ -23,6 +23,8 @@ pub enum WebSearchError {
 #[derive(Serialize)]
 pub struct TavilyRequest {
     query: String,
+    include_answer: bool,
+    max_results: u8,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -48,7 +50,11 @@ pub async fn web_search(query: String) -> Result<TavilyResponse, WebSearchError>
     let url = "https://api.tavily.com/search";
     let api_key = std::env::var("TAVILY_API_KEY")?;
 
-    let payload = TavilyRequest { query };
+    let payload = TavilyRequest {
+        query,
+        include_answer: true,
+        max_results: 15,
+    };
 
     let client = reqwest::Client::new();
     let response = client
