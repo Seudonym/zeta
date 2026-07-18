@@ -1,7 +1,6 @@
 use color_eyre::eyre::{Context, Result};
 use crossterm::execute;
 use crossterm::style::{Color, SetForegroundColor};
-use rig::providers::gemini;
 use rig::{client::CompletionClient, providers::deepseek, tool::ToolDyn};
 use std::io::{self, Write, stdout};
 use thiserror::Error;

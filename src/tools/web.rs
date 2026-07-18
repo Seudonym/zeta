@@ -1,9 +1,7 @@
 use color_eyre::eyre::Result;
-use reqwest::header::{HeaderMap, HeaderValue, ORIGIN, REFERER, USER_AGENT};
 use rig::tool::ToolDyn;
-use scraper::{Html, Selector};
-use serde::Serialize;
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use std::env::VarError;
 use thiserror::Error;
 
 pub fn toolset() -> Vec<Box<dyn ToolDyn>> {
@@ -12,41 +10,51 @@ pub fn toolset() -> Vec<Box<dyn ToolDyn>> {
 
 #[derive(Debug, Error)]
 pub enum WebSearchError {
-    #[error("Failed to make web search request")]
+    #[error("Tavily API key is invalid")]
+    ApiKeyError(#[from] VarError),
+
+    #[error("Failed to send request")]
     RequestError(#[from] reqwest::Error),
 
-    #[error("Status code not OK")]
+    #[error("Response was not a 200 OK")]
     HttpError(String),
 }
 
 #[derive(Serialize)]
-pub struct WebSearchResult {
+pub struct TavilyRequest {
+    query: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TavilySearchResult {
     title: String,
-    link: String,
-    snippet: String,
+    url: String,
+    content: String,
+    score: f32,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct TavilyResponse {
+    query: String,
+    answer: Option<String>,
+    results: Vec<TavilySearchResult>,
 }
 
 #[rig::tool_macro(
     description = "Search the web for a query",
     params(query = "The query to search for")
 )]
-pub async fn web_search(query: String) -> Result<Vec<WebSearchResult>, WebSearchError> {
-    let url = "https://html.duckduckgo.com/html";
-    let mut headers = HeaderMap::new();
-    headers.insert(USER_AGENT, HeaderValue::from_static(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    ));
-    headers.insert(ORIGIN, HeaderValue::from_static("https://duckduckgo.com"));
-    headers.insert(REFERER, HeaderValue::from_static("https://duckduckgo.com/"));
+pub async fn web_search(query: String) -> Result<Vec<TavilySearchResult>, WebSearchError> {
+    let url = "https://api.tavily.com/search";
+    let api_key = std::env::var("TAVILY_API_KEY")?;
 
-    let mut params = HashMap::new();
-    params.insert("q", query);
+    let payload = TavilyRequest { query };
 
     let client = reqwest::Client::new();
     let response = client
-        .get(url)
-        .headers(headers)
-        .query(&params)
+        .post(url)
+        .bearer_auth(api_key)
+        .json(&payload)
         .send()
         .await?;
 
@@ -57,40 +65,18 @@ pub async fn web_search(query: String) -> Result<Vec<WebSearchResult>, WebSearch
         )));
     }
 
-    let html_content = response.text().await?;
-    let document = Html::parse_document(&html_content);
+    let parsed_response: TavilyResponse = response.json().await?;
 
-    let result_selector = Selector::parse("div.links_main").unwrap();
-    let title_selector = Selector::parse("a.result__a").unwrap();
-    let url_selector = Selector::parse("a.result__url").unwrap();
-    let snippet_selector = Selector::parse("a.result__snippet").unwrap();
-
-    let mut results = Vec::new();
-    for result in document.select(&result_selector) {
-        let Some(title) = result.select(&title_selector).next() else {
-            continue;
-        };
-
-        let title_text = title.text().collect::<String>().trim().to_owned();
-
-        let link = result
-            .select(&url_selector)
-            .next()
-            .map(|e| e.text().collect::<String>().trim().to_owned())
-            .unwrap_or_default();
-
-        let snippet = result
-            .select(&snippet_selector)
-            .next()
-            .map(|e| e.text().collect::<String>().trim().to_owned())
-            .unwrap_or_default();
-
-        results.push(WebSearchResult {
-            title: title_text,
-            link,
-            snippet,
-        });
-    }
+    let results = parsed_response
+        .results
+        .into_iter()
+        .map(|res| TavilySearchResult {
+            title: res.title,
+            url: res.url,
+            content: res.content,
+            score: res.score,
+        })
+        .collect();
 
     Ok(results)
 }
