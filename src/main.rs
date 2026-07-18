@@ -29,7 +29,11 @@ async fn main() -> Result<()> {
         .preamble(&system_prompt)
         .build();
 
-    let mut tui = interface::tui::Tui::with_agent(agent);
+    let runtime = std::sync::Arc::new(tokio::sync::Mutex::new(
+        agent::runtime::AgentRuntime::new(agent),
+    ));
+
+    let mut tui = interface::tui::Tui::new(runtime.clone()).await;
     tui.run_tui().await?;
 
     Ok(())

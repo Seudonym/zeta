@@ -14,7 +14,7 @@ use thiserror::Error;
 use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AgentEvent {
     Token(String),
     ToolCall(ToolCall),
@@ -30,7 +30,7 @@ where
 {
     agent: Agent<M>,
     chat_history: Vec<Message>,
-    sender: UnboundedSender<AgentEvent>,
+    subscribers: Vec<UnboundedSender<AgentEvent>>,
 
     session_id: Uuid,
 }
@@ -51,15 +51,27 @@ impl<M> AgentRuntime<M>
 where
     M: CompletionModel + 'static,
 {
-    pub fn new(agent: Agent<M>, sender: UnboundedSender<AgentEvent>) -> Self {
+    pub fn new(agent: Agent<M>) -> Self {
         let session_id = Uuid::now_v7();
         Self {
             agent,
             chat_history: Vec::<Message>::new(),
-            sender,
+            subscribers: Vec::new(),
 
             session_id,
         }
+    }
+
+    pub fn subscribe(&mut self) -> tokio::sync::mpsc::UnboundedReceiver<AgentEvent> {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        self.subscribers.push(tx);
+        rx
+    }
+
+    fn broadcast(&mut self, event: AgentEvent) {
+        self.subscribers.retain(|sender| {
+            sender.send(event.clone()).is_ok()
+        });
     }
 
     pub async fn chat(&mut self, input: String) -> Result<()> {
@@ -70,18 +82,18 @@ where
             let chunk = match chunk_result {
                 Ok(c) => c,
                 Err(e) => {
-                    let _ = self.sender.send(AgentEvent::Error(e.to_string()));
-                    let _ = self.sender.send(AgentEvent::Done);
+                    self.broadcast(AgentEvent::Error(e.to_string()));
+                    self.broadcast(AgentEvent::Done);
                     return Ok(());
                 }
             };
             match chunk {
                 MultiTurnStreamItem::StreamAssistantItem(item) => match item {
                     StreamedAssistantContent::Text(msg) => {
-                        self.sender.send(AgentEvent::Token(msg.text))?
+                        self.broadcast(AgentEvent::Token(msg.text));
                     }
                     StreamedAssistantContent::ToolCall { tool_call, .. } => {
-                        self.sender.send(AgentEvent::ToolCall(tool_call))?
+                        self.broadcast(AgentEvent::ToolCall(tool_call));
                     }
                     _ => {}
                 },
@@ -96,17 +108,17 @@ where
                             })
                             .collect::<Vec<_>>()
                             .join("\n");
-                        self.sender.send(AgentEvent::ToolResult { content })?;
+                        self.broadcast(AgentEvent::ToolResult { content });
                     }
                 },
                 MultiTurnStreamItem::FinalResponse(fin) => {
                     self.chat_history
-                        .extend_from_slice(fin.history().unwrap_or_default());
+                    .extend_from_slice(fin.history().unwrap_or_default());
                 }
                 _ => {}
             }
         }
-        self.sender.send(AgentEvent::Done)?;
+        self.broadcast(AgentEvent::Done);
 
         Ok(())
     }

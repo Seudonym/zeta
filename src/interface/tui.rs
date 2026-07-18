@@ -1,12 +1,11 @@
 use color_eyre::eyre::Result;
 use crossterm::style::Stylize;
 use crossterm::{ExecutableCommand, cursor, style, terminal};
-use rig::agent::Agent;
 use rig::completion::CompletionModel;
 use std::io::{self, Stdout, Write};
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::agent::runtime::{AgentEvent, AgentRuntime};
 use crate::util;
@@ -19,39 +18,32 @@ const BANNER: &str = "
  ▀█▄▄   ▀█▄▄▀    ▀▄▄  ▀▄▄▀█ 
      █                      ";
 
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
 #[derive(Error, Debug)]
 enum CliError {
     #[error("IO Error")]
     IoError(#[from] std::io::Error),
-
-    #[error("Mpsc Error")]
-    MpscError(#[from] mpsc::error::SendError<String>),
 }
-pub struct Tui {
+pub struct Tui<M>
+where
+    M: CompletionModel + Send + Sync + 'static,
+{
+    runtime: Arc<Mutex<AgentRuntime<M>>>,
     event_rx: UnboundedReceiver<AgentEvent>,
-    cmd_tx: UnboundedSender<String>,
     stdout: Stdout,
 }
 
-impl Tui {
-    pub fn with_agent<M>(agent: Agent<M>) -> Self
-    where
-        M: CompletionModel + Send + Sync + 'static,
-    {
-        let (event_tx, event_rx) = mpsc::unbounded_channel::<AgentEvent>();
-        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<String>();
-
-        let mut runtime = AgentRuntime::new(agent, event_tx);
-
-        tokio::spawn(async move {
-            while let Some(input) = cmd_rx.recv().await {
-                runtime.chat(input).await.ok();
-            }
-        });
-
+impl<M> Tui<M>
+where
+    M: CompletionModel + Send + Sync + 'static,
+{
+    pub async fn new(runtime: Arc<Mutex<AgentRuntime<M>>>) -> Self {
+        let event_rx = runtime.lock().await.subscribe();
         Self {
+            runtime,
             event_rx,
-            cmd_tx,
             stdout: io::stdout(),
         }
     }
@@ -86,7 +78,11 @@ impl Tui {
             return Ok(());
         }
 
-        self.cmd_tx.send(clean_input)?;
+        let runtime = self.runtime.clone();
+        tokio::spawn(async move {
+            let mut rt = runtime.lock().await;
+            rt.chat(clean_input).await.ok();
+        });
         Ok(())
     }
 
